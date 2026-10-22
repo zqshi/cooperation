@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Smoke Test · 派发→执行→验收→流程放行</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main">
+    <header class="topbar" id="topbar"></header>
+    <main class="view" id="view"></main>
+  </div>
+</div>
+<div id="tenantMenu" class="dropdown"></div>
+<div id="notifMenu" class="dropdown"></div>
+<div class="drawer" id="drawer"></div>
+<div class="modal-scrim" id="modalScrim"><div class="modal" id="modal"></div></div>
+<div class="toast-wrap" id="toasts"></div>
+<script src="data.js"></script>
+<script src="views.js"></script>
+<script src="engine.js"></script>
+<script>
+const results = [];
+const assert = (name, cond) => results.push((cond ? 'PASS' : 'FAIL') + ' | ' + name);
+
+const auditBefore = state.audits.length;
+const notifBefore = state.notifs.length;
+const sessionsBefore = state.sessions.length;
+
+startSession(getTask('ORD-1855'), 'claude-code', 'initial');
+
+setTimeout(() => {
+  const t = getTask('ORD-1855');
+  const s = state.sessions[0];
+  assert('会话已创建', state.sessions.length === sessionsBefore + 1);
+  assert('任务被置为 in_progress（执行期间）', t.status === 'in_review' || t.status === 'in_progress');
+}, 1000);
+
+setTimeout(() => {
+  const t = getTask('ORD-1855');
+  const s = state.sessions[0];
+  assert('会话状态 completed', s.status === 'completed');
+  assert('任务自动流转 in_review', t.status === 'in_review');
+  assert('任务成本已归因', t.cost > 0);
+  assert('审计 +3（session.start + complete + status_change）', state.audits.length === auditBefore + 3);
+  assert('通知 +1（待验收）', state.notifs.length === notifBefore + 1);
+
+  approveTask('ORD-1855');
+  const t2 = getTask('ORD-1855');
+  assert('验收后任务为 done', t2.status === 'done');
+  assert('验收后通知移除', state.notifs.length === notifBefore);
+
+  const wfHistBefore = getWf('WD-2041').history.length;
+  const auditBeforeWf = state.audits.length;
+  signalWf('WD-2041');
+  const wf = getWf('WD-2041');
+  assert('流程放行后 completed', wf.status === 'completed');
+  assert('流程事件历史 +4（signal + 2 activity + complete）', wf.history.length === wfHistBefore + 4);
+  assert('流程审计 +1（workflow.signal）', state.audits.length === auditBeforeWf + 1);
+
+  openNewWorkflowModal();
+  $('#nwfName').value = '冒烟测试工作流';
+  confirmNewWorkflow();
+  assert('新建工作流进入列表（running）', tenantWfs().some((w) => w.name === '冒烟测试工作流' && w.status === 'running'));
+  assert('新建工作流审计 +1（workflow.start）', state.audits.length === auditBeforeWf + 2);
+
+  openMrModal('MR-281');
+  assert('MR 弹窗打开且含关联任务', $('#modalScrim').classList.contains('open') && $('#modal').innerHTML.indexOf('ORD-1839') > -1);
+  closeModal();
+
+  openTaskDrawer('ORD-1839');
+  assert('验收阶段抽屉仅显示验收操作（无派发按钮）', $('#drawer').innerHTML.indexOf('派发给 Agent') === -1 && $('#drawer').innerHTML.indexOf('通过验收') > -1);
+  closeDrawer();
+  dispatchTask('ORD-1839');
+  assert('验收阶段派发被拦截（不新增会话）', state.sessions.filter((s) => s.taskId === 'ORD-1839').length === 1 && getTask('ORD-1839').status === 'in_review');
+
+  openNewAutomationModal();
+  assert('触发配置区默认联动 GitHub（标签过滤）', $('#naCfg').innerHTML.indexOf('标签过滤') > -1 && $('#naCfg').innerHTML.indexOf('仓库范围') > -1);
+  $('#naTrigger').value = 'schedule';
+  $('#naTrigger').dispatchEvent(new Event('change', { bubbles: true }));
+  assert('切换定时触发 → 配置区显示频率 + 时间', $('#naCfg').innerHTML.indexOf('触发时间') > -1 && $('#naCfg').innerHTML.indexOf('执行频率') > -1);
+  const autoBefore = state.automations.length;
+  const auditBeforeAuto = state.audits.length;
+  $('#naName').value = '冒烟测试定时规则';
+  confirmNewAutomation();
+  const na = state.automations[0];
+  assert('创建触发规则成功（组合配置 → 列表 + 审计 +1）', state.automations.length === autoBefore + 1 && na.name === '冒烟测试定时规则' && na.triggerText === '每天 09:30' && state.audits.length === auditBeforeAuto + 1);
+
+  const report = 'SMOKE:' + results.join(' ;; ');
+  document.body.setAttribute('data-smoke', report);
+}, 20000);
+</script>
+</body>
+</html>
