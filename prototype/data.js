@@ -22,6 +22,7 @@ const I = {
   refresh: sv('<path d="M13.2 8a5.2 5.2 0 1 1-1.5-3.7"/><path d="M13.4 2.6v2.9h-2.9"/>'),
   alert: sv('<path d="M8 2.8 14 12.6H2z"/><path d="M8 6.8v2.6M8 11.2v.1"/>'),
   play: sv('<path d="M5 3.8v8.4L12.4 8z"/>'),
+  pause: sv('<path d="M5.5 3.5v9M10.5 3.5v9" stroke-width="2"/>'),
   doc: sv('<path d="M4 2.5h5.5L12.5 5.5v8h-8.5z"/><path d="M9.3 2.7v3h3"/>'),
   flow: sv('<circle cx="4.2" cy="4.2" r="1.7"/><circle cx="11.8" cy="11.8" r="1.7"/><path d="M4.2 5.9v3.3a2.6 2.6 0 0 0 2.6 2.6h3.3"/>'),
 };
@@ -45,7 +46,7 @@ const MEMBERS = {
   'platform': [{ name: '王启', role: '负责人' }, { name: '李澄', role: 'SRE' }, { name: '秦越', role: '平台管理员' }],
 };
 
-const STATUS = { backlog: { label: '积压事项' }, todo: { label: '待办事项' }, in_progress: { label: '进行中' }, in_review: { label: '审核中' }, blocked: { label: '已阻塞' }, done: { label: '完成' }, canceled: { label: '已取消' } };
+const STATUS = { backlog: { label: '积压事项' }, confirming: { label: '确认中' }, todo: { label: '待办事项' }, in_progress: { label: '进行中' }, in_review: { label: '审核中' }, blocked: { label: '已阻塞' }, done: { label: '完成' }, canceled: { label: '已取消' } };
 const ME = { name: '秦越', role: '平台管理员' };
 const now = Date.now();
 const minute = 60 * 1000, hour = 60 * minute, day = 24 * hour;
@@ -76,6 +77,7 @@ const tagPills = (tags) => tags.map((t) => '<span class="pill tag">' + esc(t) + 
 
 function mkTask(o) {
   return Object.assign({
+    accepted:true, dorReady: !['backlog','confirming','blocked'].includes(o.status), dor: ['backlog','confirming','blocked'].includes(o.status) ? [false,false,false] : [true,true,true], clarifications:[], owner:o.owner || o.by || '秦越', contextConfirmed:true,
     status: 'todo', priority: 'P2', tags: [], repo: 'trade/order-service', branch: null,
     by: '秦越', agent: null, sessionId: null, cost: 0, pr: null, comments: [], activity: [],
   }, o);
@@ -108,11 +110,11 @@ const nextAutoId = (() => {
 })();
 
 const state = {
-  view: 'dashboard', tenant: 'trade-core', sessFilter: 'all',
+  view: 'dashboard', tenant: 'trade-core', sessStage: 'all', sessSearch: '', sessShowAllStages: false,
+  boardQ: '', boardPriority: 'all',
   currentSession: null, drawerTask: null, drawerWf: null,
   auditQ: '', auditAction: 'all',
   sessionSeq: 1046, hintDismissed: false,
-  collabActor: '林琳', storyDor: [false, false, false], storyClarifications: [],
   storyContextInjected: false, storyContextApproved: false,
   tasks: [], sessions: [], audits: [], notifs: [], automations: [], workflows: [], costs: {},
 };
@@ -126,7 +128,7 @@ const getWf = (id) => state.workflows.find((w) => w.id === id);
 
 state.tasks = [
   mkTask({
-    id: 'ORD-1855', tenant: 'trade-core', title: '行情推送断线重连优化', priority: 'P1', status: 'in_progress',
+    id: 'ORD-1855', tenant: 'trade-core', title: '行情推送断线重连优化', priority: 'P1', status: 'todo',
     tags: ['perf', 'gateway'], repo: 'trade/quote-gateway', by: '林远',
     desc: '当前行情网关断线后重连采用固定退避，网络抖动场景下会触发重连风暴（实测 QPS 掉 40%）。\n\n要求：\n· 改为指数退避 + 随机抖动，上限 30s\n· 重连期间降级为快照拉取，避免行情空洞\n· 补充抖动参数的单测',
     comments: [{ by: '林远', text: '压测环境已复现：弱网 2 分钟后 QPS 从 12k 掉到 7.2k', ts: now - 3 * hour }],

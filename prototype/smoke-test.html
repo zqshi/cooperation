@@ -29,7 +29,9 @@ const auditBefore = state.audits.length;
 const notifBefore = state.notifs.length;
 const sessionsBefore = state.sessions.length;
 
-startSession(getTask('ORD-1855'), 'claude-code', 'initial');
+state.sessStage = 'confirming'; state.sessSearch = '不存在';
+dispatchTask('ORD-1855');
+assert('阶段及搜索后派发显示当前执行', state.sessStage === 'all' && state.sessSearch === '' && state.currentSession === getTask('ORD-1855').sessionId && $('.sess-item.active')?.dataset.id === state.currentSession && !!$('#sessEvents'));
 
 setTimeout(() => {
   const t = getTask('ORD-1855');
@@ -87,6 +89,119 @@ setTimeout(() => {
   confirmNewAutomation();
   const na = state.automations[0];
   assert('创建触发规则成功（组合配置 → 列表 + 审计 +1）', state.automations.length === autoBefore + 1 && na.name === '冒烟测试定时规则' && na.triggerText === '每天 09:30' && state.audits.length === auditBeforeAuto + 1);
+
+  const click = action => { const el=$('#view [data-action="'+action+'"]') || $('#drawer [data-action="'+action+'"]'); if(!el) throw Error('缺少控件 '+action); el.click(); };
+  const send = text => { $('#conversationInput').value=text; $('#conversationInput').dispatchEvent(new Event('input',{bubbles:true})); $('#view [data-form="conversation-send"]').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})); };
+  const resolveAll = () => { let n=0; while($('#view [data-action="resolve-question"]') && n++<10) $('#view [data-action="resolve-question"]').click(); };
+  const ready = () => { for(let i=0;i<3;i++){const el=$('#view [data-story-dor="'+i+'"]');el.checked=true;el.dispatchEvent(new Event('change',{bubbles:true}));} click('story-ready'); };
+  const life = op => { const el=$('#view [data-op="'+op+'"]'); if(!el) throw Error('缺少生命周期控件 '+op); el.click(); };
+  try {
+    openNewTaskModal('external'); fillIntakeDemo('external'); confirmNewTask();
+    const external=getTask('PAY-2048');
+    $('#drawer [data-action="clarify-route"]').click();
+    const count=state.sessions.length, extThread=external.conversation;
+    const callback = (text, replyTo) => { const thread=external.conversation; const target=replyTo || thread.messages.filter(m=>m.role==='user' && m.delivery==='sent' && !thread.messages.some(x=>x.role==='source' && x.replyTo===m.id)).at(-1)?.id; if(!target || !receiveSDK(external,{messageId:uidSeq('callback'),replyTo:target,text})) throw Error('SDK 回调失败'); };
+    assert('澄清在会话台且没有宽屏弹窗',state.view==='sessions' && !!$('.sess-detail #conversationInput') && !$('#modalScrim').classList.contains('open'));
+    assert('仅任务阶段导航和共享生命周期',document.querySelectorAll('[data-action="sess-kind"]').length===0 && document.querySelectorAll('[data-action="sess-stage"]').length===9 && !!$('.lifecycle-side') && $('#view').textContent.includes('任务阶段'));
+    send('请确认退款范围'); const outbound=extThread.messages.at(-1);
+    send('范围不变'); const outbound2=extThread.messages.at(-1);
+    assert('不提供手工回调控件',!$('#sdkFail') && !$('[data-form="sdk-callback"]') && !$('[data-action="sdk-sample"]') && !$('[data-action="sdk-retry"]'));
+    moveTask(external.id,'todo'); startSession(external,'codex','initial');
+    assert('等待回调阻塞执行且统计隔离',external.status==='confirming' && state.sessions.length===count && tenantSessions().every(s=>s.kind!=='sdk'));
+    $('#conversationInput').value='未发送草稿'; $('#conversationInput').dispatchEvent(new Event('input',{bubbles:true}));
+    click('conversation-close'); $('#drawer [data-action="clarify-route"]').click();
+    assert('查看任务后重开保留消息草稿',external.conversation===extThread && $('#conversationInput').value==='未发送草稿');
+    callback('仅退款列表，按列表详情一致验收', outbound.id);
+    const incoming=extThread.messages.at(-1), n=extThread.messages.length;
+    assert('SDK重复及跨任务回调拒绝',!receiveSDK(external,{messageId:incoming.id,replyTo:outbound.id,text:'重复'}) && !receiveSDK(external,{taskId:'OTHER',messageId:'cross',replyTo:outbound.id,text:'串卡'}) && n===extThread.messages.length);
+    callback('范围不变', outbound2.id); resolveAll(); ready();
+    assert('负责人确认后才进入待办且线程只读',external.status==='todo' && !$('#conversationInput'));
+    click('story-context');
+    assert('会话台确认上下文可达',state.storyContextInjected);
+    life('reclarify'); const round2=external.conversation;
+    assert('显式下一轮撤销DoR保留旧历史',external.status==='confirming' && round2!==extThread && external.conversationHistory.includes(extThread));
+    const taskSnapshot=JSON.stringify({status:external.status,dor:external.dor,activity:external.activity});
+    $('[data-action="open-session"][data-id="'+extThread.id+'"]').click();
+    assert('查看旧澄清历史只读且不变更业务',!$('#conversationInput') && JSON.stringify({status:external.status,dor:external.dor,activity:external.activity})===taskSnapshot);
+    $('[data-action="open-session"][data-id="'+round2.id+'"]').click();
+    send('确认最终范围'); const late=round2.messages.at(-1); callback('最终范围不变'); resolveAll(); ready(); click('story-context');
+    click('dispatch'); const first=getSession(external.sessionId);
+    assert('派发进入同壳执行且只有唯一运行轮次',state.currentSession===first.id && external.status==='in_progress' && !!$('#sessEvents'));
+    assert('执行会话可准确选中',!!$('[data-action="open-session"][data-id="'+first.id+'"]') && $('#view').textContent.includes('执行中'));
+    const before=state.sessions.length; startSession(external,'codex','initial');
+    assert('直接start不能重复执行',state.sessions.length===before);
+    const reorderSessions=state.sessions.length, reorderAudits=state.audits.length;
+    moveTask(external.id,'in_progress');
+    assert('执行中同状态仅重排不重新派发',external.status==='in_progress' && Number.isInteger(external.order) && state.sessions.length===reorderSessions && state.audits.length===reorderAudits && getSession(external.sessionId)===first);
+    moveTask(external.id,'blocked');
+    assert('暂停停止旧执行进入阻塞',first.status==='paused' && external.status==='blocked');
+    const cost=first.cost;
+    const oldEvents=first.events.length;
+    const oldScript=buildScript(first,'initial'); runScript(first,oldScript);
+    assert('暂停旧轮次不能重启脚本',first.status==='paused' && first.events.length===oldEvents); completeSession(first);
+    assert('旧执行完成回调不能推进任务',external.status==='blocked' && first.cost===cost);
+    openConversation(external); assert('打开澄清进入确认中',external.status==='confirming');
+    send('缺口已核实'); callback('依赖可用，按原口径验收'); resolveAll(); ready(); click('story-context'); state.sessStage='confirming'; life('resume');
+    const second=getSession(external.sessionId);
+    assert('恢复后显示当前执行',state.sessStage==='all' && state.currentSession===second.id && $('.sess-item.active')?.dataset.id===second.id && !!$('#sessEvents'));
+    assert('恢复新轮次不复活旧timer',second.id!==first.id && second.status==='running' && first.status==='paused');
+    life('cancel'); completeSession(second);
+    assert('取消停止执行终态输入关闭',external.status==='canceled' && second.status==='closed' && !$('#conversationInput') && !$('#view [data-role="composer-input"]:not(:disabled)'));
+    assert('旧线程迟到回调不污染取消任务',!receiveSDK(external,{threadId:round2.id,messageId:'late',replyTo:late.id,text:'迟到'}) && external.status==='canceled');
+    click('reopen'); assert('重开不会直接执行', ['todo','backlog'].includes(external.status));
+    openNewTaskModal('platform'); fillIntakeDemo('platform'); confirmNewTask(); const platform=state.tasks[0];
+    $('#drawer [data-action="clarify-route"]').click(); send('只优化退款入口'); send('以列表和详情一致验收');
+    assert('Agent多轮复用消息草稿',platform.conversation.messages.filter(m=>m.role==='agent').length===3 && platform.contractDraft.includes('列表和详情一致'));
+    assert('跨任务消息隔离',platform.conversation!==extThread && !platform.conversation.messages.some(m=>m.id===outbound.id));
+    resolveAll(); ready(); click('story-context'); click('dispatch'); const ps=getSession(platform.sessionId); completeSession(ps);
+    assert('统一UI确认执行到待验收',platform.status==='in_review' && !!$('#view [data-action="approve"]'));
+    moveTask(platform.id,'todo'); $('#rjReason').value='补齐边界测试'; $('[data-action="confirm-reject"]').click();
+    assert('返工理由落档并回到待办',platform.status==='todo' && platform.comments.some(c=>c.text==='补齐边界测试'));
+    click('dispatch'); const revised=getSession(platform.sessionId); completeSession(revised);
+    assert('返工创建新轮次保留旧证据',revised.id!==ps.id && ps.status==='completed' && !!ps.evidence);
+    click('approve'); assert('授权人工验收完成',platform.status==='done');
+    openConversation(external);
+    $('#sessSearch').value='不存在的任务'; $('#sessSearch').dispatchEvent(new Event('input',{bubbles:true}));
+    assert('搜索空结果且无传输筛选',!state.currentSession && !$('.sess-item') && !$('[data-action="sess-kind"]'));
+    state.sessSearch='';
+    state.tenant='trade-core'; state.currentSession=platform.conversation.id; render();
+    assert('切换项目不会显示其他项目线程',!$('#view').textContent.includes(platform.title));
+    state.tenant='pay-settle'; go('board');
+    // 通过真实预设按钮覆盖两种来源入口，不改变前面的执行故事。
+    const preset = key => fillIntakeDemo(key);
+    const submitIntake = () => $('#modal [data-action="confirm-new-task"]').click();
+    const demoCount = state.tasks.length, demoAudits = state.audits.length, demoSessions = state.sessions.length;
+    for (const origin of ['external', 'platform']) {
+      openNewTaskModal(origin);
+      for (const key of ['external', 'platform', 'missing', 'scope']) {
+        preset(key);
+        assert(origin + ' 入口可切换 ' + key + ' 并替换全部字段', state.intakeOrigin === INTAKE_DEMOS[key].origin && $('#ntProject').value === 'pay-settle' && $('#ntRepo').value === 'pay/settlement' && $('#ntPrio').value === 'P1' && $('#ntTags').value.includes('演示') && $('#ntSource').value.includes('演示') && $('#ntRef').value.includes('演示原文') && $('#ntTitle').value === INTAKE_DEMOS[key].title && $('#ntDesc').value === INTAKE_DEMOS[key].desc && $('#ntOwner').value === (key === 'missing' ? '' : '周明') && $('#ntScope').checked === (key !== 'scope') && !$('#ntTitle').disabled);
+      }
+    }
+    assert('快速填充不建卡不写审计不执行', state.tasks.length === demoCount && state.audits.length === demoAudits && state.sessions.length === demoSessions);
+    preset('missing'); submitIntake();
+    assert('缺项预设拦截责任人和描述', $('#ntError').textContent.includes('联系人/责任人') && $('#ntError').textContent.includes('问题或目标描述') && state.tasks.length === demoCount);
+    preset('scope'); submitIntake();
+    assert('范围预设清除旧错误并由范围门拦截', $('#ntError').textContent === '缺少：项目范围确认；未创建任务' && state.tasks.length === demoCount);
+    preset('external');
+    assert('外部预设可提交已有演示卡', !$('#ntError').textContent);
+    submitIntake();
+    assert('已有 PAY-2048 被打开且不重复创建', state.tasks.length === demoCount && $('#drawer').textContent.includes(external.id));
+    openNewTaskModal('external'); preset('platform'); $('#ntTitle').value = '【演示】可编辑的平台优化'; submitIntake();
+    const demoTask = state.tasks[0];
+    assert('平台预设人工收录后进入 Agent 澄清且未确认 DoR', demoTask.title === '【演示】可编辑的平台优化' && demoTask.originKind === 'platform' && demoTask.sourceRef.includes('演示原文') && demoTask.status === 'backlog' && !demoTask.dorReady && !demoTask.dor.some(Boolean) && $('#drawer').textContent.includes('与 Agent 澄清'));
+    for (const stage of Object.keys(STATUS)) {
+      delete intakeDrafts.platform;
+      go('board');
+      $('#view .board-col[data-status="'+stage+'"] [data-action="new-task"]').click();
+      assert('列入口安全意向 '+stage,$('#modal .modal-title').textContent==='新建任务' && $('#ntStage').value===(['backlog','confirming','todo'].includes(stage)?stage:'backlog'));
+      $('#ntTitle').value='列入口 '+stage; $('#ntDesc').value='等待负责人核实范围与验收';
+      submitIntake(); const created=state.tasks[0];
+      assert('列入口真实安全阶段 '+stage,created.status===(['confirming','todo'].includes(stage)?'confirming':'backlog') && !created.dorReady && !created.dor.some(Boolean));
+    }
+    openConversation(state.tasks[0]);
+    assert('确认中右栏与折叠历史',!!$('.lifecycle-side') && !!$('.rail-history'));
+  } catch (e) { assert('收录澄清回归异常：' + e.message, false); }
 
   const report = 'SMOKE:' + results.join(' ;; ');
   document.body.setAttribute('data-smoke', report);

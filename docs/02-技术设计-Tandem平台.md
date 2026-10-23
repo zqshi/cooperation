@@ -98,6 +98,7 @@ sequenceDiagram
   participant Project as Project Management
   participant Task as Task Collaboration
   participant Context as Context
+  participant Clarify as Clarification Agent
   participant Exec as Execution
   participant Evidence as Evidence
   participant Asset as Project Asset
@@ -107,15 +108,27 @@ sequenceDiagram
   Intake->>Project: 查询项目引用与接入权限
   Project-->>Intake: project_id + 授权/策略版本
   Intake->>Task: TaskCandidate（经防腐层转换）
-  Task->>Task: 创建 backlog 任务
+  Task-->>Owner: 展示候选信息，请补齐项目、来源、目标、责任人及来源引用
+  Owner->>Task: 补齐最小收录信息并确认项目范围
+  Task->>Task: 校验必填信息（缺项则提示，保持候选、不建卡）
+  Owner->>Task: 确认并加入积压
+  Task->>Task: 校验通过且人工确认后创建 backlog 任务
   Task-->>Owner: 展示任务卡并请求受理
   Owner->>Task: AcceptTask
-  Owner->>Task: AskClarification（可多条）
-  Task-->>Requester: 通知补充指定问题
-  Requester->>Task: AnswerClarification
-  Task-->>Owner: 更新卡片与协作时间线
+  alt 原始来源为 external
+    Owner->>Task: 打开任务对话并 AskClarification
+    Task-->>Requester: 来源 SDK 发送留言，等待来源方回调
+    Requester->>Task: SDK 留言 / 带 messageId、replyTo 的来源回调
+  else 原始来源为 platform
+    Owner->>Task: 打开 purpose=clarification 会话
+    Task->>Clarify: 已有任务与获准引用
+    Clarify-->>Owner: 关键问题及契约草稿
+    Owner->>Task: 回答问题、修订草稿
+  end
+  Owner->>Task: ResolveClarification / CloseClarification(reason)
+  Task-->>Owner: 更新问题状态、草稿和协作时间线
 
-  alt 仍有未答问题或任务契约不完整
+  alt 来源未核实、必要问题未解决或任务契约不完整
     Task->>Task: 保持 backlog，不发布 TaskReady
   else 澄清已完成且 DoR 确认
     Owner->>Task: ConfirmTaskContract
@@ -209,10 +222,10 @@ Project Management BC                 Task Collaboration BC
 | `backlog` | `todo`、`canceled` | 澄清完成且任务契约通过 DoR 后才可进入 `todo` |
 | `todo` | `in_progress`、`canceled` | Execution 成功取得任务租约后开始执行 |
 | `in_progress` | `in_review`、`blocked`、`canceled` | 提交证据后可申请验收；遇到阻碍可转 `blocked` |
-| `in_review` | `done`、`in_progress`、`canceled` | 授权验收人通过；或填写返工理由退回 |
-| `blocked` | `in_progress`、`canceled` | 阻碍解除后恢复执行 |
-| `done` | `in_progress`、`todo`、`canceled` | 重新打开保留原验收与执行历史 |
-| `canceled` | `todo` | 重新打开回到待办流程 |
+| `in_review` | `done`、`todo`、`canceled` | 授权验收人通过；或填写返工理由退回 |
+| `blocked` | `todo`、`canceled` | 阻碍解除并重新确认 DoR，待办后以新轮次恢复 |
+| `done` | `backlog`、`todo` | 重新打开保留原验收与执行历史 |
+| `canceled` | `backlog`、`todo` | 重新打开按执行条件回到积压或待办 |
 
 `backlog` 在信息不足时保持原位。Agent 不能调用 `ApproveTask`，因此不能自行将任务置为 `done`。
 
@@ -281,14 +294,24 @@ Project Management BC                 Task Collaboration BC
 
 | 阶段 | 发起方 / 命令 | 聚合处理 | 结果与约束 |
 |---|---|---|---|
-| 信号建卡 | Signal Intake → `CreateTaskFromSignal` | Task Collaboration 创建任务 | 建立项目内 `backlog` 任务 |
-| 受理与澄清 | 受理人 → `AcceptTask`、`AskClarification`、`AnswerClarification` | Task 聚合记录受理决定和逐条澄清 | 有未答问题时保持 `backlog` |
+| 信号建卡 | Signal Intake → `CreateTaskFromSignal` | Task Collaboration 创建任务 | 采集区补齐必填字段、人工确认后建立项目内 `backlog` 任务 |
+| 受理与澄清 | 受理人 → `AcceptTask`；按来源打开任务对话或澄清 Agent；`AskClarification`、`AnswerClarification`、`ResolveClarification`、`CloseClarification(reason)` | Task 聚合校验来源、答复依据与负责人确认 | 必要问题未解决且未有理由关闭时保持 `backlog`；答复不自动解锁 |
 | 契约就绪 | 负责人 → `ConfirmTaskContract` | Task 聚合校验澄清与 DoR | 满足准入后发布 `TaskReady`，进入 `todo` |
 | 认领与准备 | Scheduler → `ClaimTask` | Execution 原子取得 lease；Context 查询任务级 `ContextPack` | 创建 ACP Session / Attempt；记录 `TaskClaimed`、`AttemptStarted` |
 | 执行与提交 | Agent 执行，Execution 回传结果 | Evidence 聚合追加验证结果和变更引用；Task 校验证据引用 | 证据满足任务契约后进入 `in_review` |
-| 人工验收 | 验收人 → `ApproveTask` 或 `RejectTask` | Task 聚合记录决定及 Evidence ID | 通过进入 `done`；打回回到 `in_progress` 并创建新 attempt，旧证据只读保留 |
+| 人工验收 | 验收人 → `ApproveTask` 或 `RejectTask` | Task 聚合记录决定及 Evidence ID | 通过进入 `done`；打回回到 `todo`，再次派发创建新 attempt，旧证据只读保留 |
 
-### 7.1 项目资产与上下文复用
+### 7.1 来源路由与澄清会话
+
+`origin_kind` 表示原始业务来源（`external/platform`），与 `created_by`、导入方式和 Agent 厂商分离。外部来源保留系统标识、记录标识和原始引用；人工转录不得变成平台来源。负责人可纠正来源，必须提供原因并审计。来源未核实不能收录；确认来源后只进入这两条路径之一。
+
+外部来源通过来源系统 SDK 对话留言，等待来源方反馈。平台创建任务由模拟 Agent 多轮澄清，只整理已提供事实，不执行编码。两条路径均须负责人确认问题解决并在会话台确认 DoR，才可进入待办。
+
+澄清会话使用 `purpose=clarification`，绑定任务并单独保存消息及成本；不使用执行租约、执行 attempt 或 `TaskReady`。Agent 只能读取获准上下文、提出问题和提交契约草稿，不能调用就绪确认、执行、验收或发布命令。原始消息属于会话记录；问题、答复引用、确认状态与契约版本属于 Task 聚合，不能从消息到达直接推导就绪。
+
+问题状态为 `awaiting_answer → awaiting_confirmation → resolved`；负责人可退回 `awaiting_answer`，或以理由置为 `closed`。`ConfirmTaskContract(expected_version)` 原子校验来源已核实、已受理、必要问题均解决或有理由关闭、契约完整及确认人权限。Agent 不具备该命令权限。新增关键问题或实质修改契约必须使既有 DoR 失效；未执行任务退回 `backlog`，执行中任务先暂停并转 `blocked`。恢复执行前重新确认契约版本；并发旧版本确认返回 409。执行 Agent 只使用确认版本与获准引用，不能把未确认草稿作为指令。
+
+### 7.2 项目资产与上下文复用
 
 任务完成后，可通过 `RegisterProjectAsset` 将产物登记到所属项目。资产记录来源任务、版本、权限、摘要和审核状态；Context 只检索通过治理且仍有效的版本。引用命中、团队采纳、验收和打回作为质量信号；资产删除或过期时，旧引用失效并留下审计记录。
 
@@ -303,8 +326,16 @@ project_member(project_id, member_id, role, version)
 
 -- Task Collaboration
 task(id, tenant_id, project_id, status, title, contract_json,
-     accepted_at, dor_ready, assignee_id, version, created_at, updated_at)
-clarification(id, task_id, question, answer, asked_by, answered_by, status)
+     accepted_at, dor_ready, assignee_id, origin_kind, source_system,
+     source_record_id, source_ref, created_by, contract_version, confirmed_contract_version,
+     version, created_at, updated_at)
+clarification(id, task_id, question, answer, required, asked_by, answered_by,
+              status, answer_ref, resolved_by, resolved_at, close_reason)
+
+-- Task-bound clarification conversation (no execution lease or attempt)
+clarification_session(id, task_id, purpose, channel, agent_type, status, created_at)
+clarification_message(id, session_id, actor_id, actor_type, body,
+                      source_ref, relay_by, created_at)
 task_acceptance(id, task_id, decision, reviewer_id, reason, evidence_ids, decided_at)
 
 -- Execution
@@ -351,7 +382,7 @@ audit_event(id, tenant_id, project_id, task_id, actor_type, action,
 
 | 身份 | 允许操作 |
 |---|---|
-| 受理人 | 受理信号、提出和回复澄清 |
+| 受理人 | 受理信号、提出和回复澄清；负责人确认问题解决、来源纠正与契约就绪 |
 | 任务负责人 | 确认任务契约、发起执行 |
 | Agent | 写入执行事件与证据、提交审核；不能确认完成 |
 | 验收人 | 通过或打回任务，并记录验收依据 |
@@ -372,3 +403,19 @@ Phase 0 验证聚合命令、状态门、澄清门、权限矩阵、Webhook、AC
 ## 12. 参考实现边界
 
 可借鉴 `ks-clawmate` 的 agent-center、knowledge-service、runtime-conductor 接口思想；Tandem 保持 Task Collaboration 的任务权威源、人工验收门和任务级上下文拉取边界，不直接复制参考项目的服务状态作为第二任务源。
+
+## 收录门与原型能力边界
+
+信号与平台新建意图首先进入采集区，采集区不是任务状态，不属于八态任务板。收录必填项目、原始来源、标题、问题或目标描述、联系人/责任人以及项目范围确认；`external` 另需来源引用。缺项提示且不建卡，人为创建可选 `backlog` 或 `confirming`；待办意向实际先进入 `confirming`，不能默认就绪。收录门确认是否纳入项目，DoR 确认可执行，两者分开。
+
+问题、答复与历史、契约草稿和 DoR 保存于各任务对象。答复进入待确认，负责人确认解决后才允许通过 DoR 进入 `todo`；拖拽与派发也校验同一门禁。执行、返工和人工验收沿用现有模拟故事；操作统一记录为当前用户。`prototype/smoke-test.html` 覆盖缺项不建卡、收录后 backlog、两类来源路由、答复待确认阻塞、任务隔离和状态门，并保留原执行验收回归。
+
+### 统一会话台与双层生命周期（交互模拟）
+
+卡片的「打开 / 继续对话」跳转会话台并选中关联线程，不再打开澄清弹窗。左侧按全部 / Agent澄清 / SDK沟通 / 执行筛选，可叠加状态筛选；中间共享任务、阶段、会话状态、时间线和固定输入区；右侧提供问题确认、负责人 DoR、上下文确认、派发、暂停并澄清、恢复、人工验收 / 返工、取消 / 重开及查看任务。执行保留终端、diff 和证据；澄清复用消息、草稿与上下文。
+
+任务采用八态：收录 `backlog` → 显式开始澄清 `confirming`（平台 Agent / 外部 SDK 共用）→ 必要问题解决并由负责人确认 DoR 后 `todo` → 唯一运行轮次 `in_progress` → 证据齐全 `in_review` → 授权人工 `done`。返工必须给理由，回待办后派发新轮次并保留历史；执行缺口暂停进入 `blocked`，旧计时停止，补齐并重新确认后回待办，通过「恢复执行」创建新轮次。取消进入 `canceled` 并停止执行；完成 / 取消重开按执行条件进入积压或待办，禁止直接执行。拖拽、输入与直接派发遵循同一门禁，Agent 永远不能确认完成。
+
+澄清会话独立流转：`active`（进行中）、`waiting_reply`（等待回复）、`awaiting_confirmation`（等待负责人确认）、`resolved`（已解决）、`closed`（已关闭）。执行会话为运行 / 暂停 / 完成 / 失败 / 关闭。SDK 留言发送后记录等待来源方反馈；回调去重并校验所属任务、轮次及关联留言，已结束线程与任务拒绝迟到回调。已解决线程只读，新补充须明确「重新澄清」开启下一轮，撤销 DoR；未执行任务回积压，旧轮次消息保留。仅查看历史不改变业务状态。
+
+澄清保存在任务及历史轮次，通过带 `kind` 的独立投影与执行列表合并，不写入执行 `state.sessions`，不参与运行数和成本统计。重要操作记录 activity / audit。四种采集预设仍只填表，不跳过收录和执行条件。全部为单页面内存模拟，关闭与切换保留消息草稿，刷新恢复种子数据；未接入真实 Agent、SDK 送达、身份鉴权、分布式执行租约或持久化。

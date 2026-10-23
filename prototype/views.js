@@ -74,6 +74,7 @@ function render() {
   renderTenantMenu();
   renderNotifMenu();
   const v = $('#view');
+  v.className = 'view view-' + state.view;
   if (state.view === 'dashboard') v.innerHTML = viewDashboard();
   else if (state.view === 'board') v.innerHTML = viewBoard();
   else if (state.view === 'sessions') v.innerHTML = viewSessions();
@@ -82,6 +83,7 @@ function render() {
   else if (state.view === 'costs') v.innerHTML = viewCosts();
   else if (state.view === 'audit') v.innerHTML = viewAudit();
   else if (state.view === 'settings') v.innerHTML = viewSettings();
+  if (state.view === 'sessions') { const log = $('#sessEvents'); if (log) log.scrollTop = log.scrollHeight; }
   if (state.view === 'board') bindBoardDnD();
   if (state.drawerTask) renderDrawer();
   if (state.drawerWf) renderWfDrawer();
@@ -202,149 +204,266 @@ function barChart(daily) {
   }).join('')}</div>`;
 }
 
+const BOARD_STAGES = [
+  { id: 'backlog', name: '积压事项', short: '积压', hint: '判断是否纳入项目，补齐收录信息' },
+  { id: 'confirming', name: '确认中', short: '澄清', hint: '澄清目标、范围与验收，确认 DoR' },
+  { id: 'todo', name: '待办事项', short: '待办', hint: '契约就绪，等待派发 Agent' },
+  { id: 'in_progress', name: '进行中', short: '执行', hint: 'Agent 执行中，观察进展与证据' },
+  { id: 'in_review', name: '审核中', short: '验收', hint: 'Agent 止步于此，等待人工验收' },
+  { id: 'blocked', name: '已阻塞', short: '阻塞', hint: '等待补充信息或处理例外' },
+  { id: 'done', name: '完成', short: '完成', hint: '人工验收通过' },
+  { id: 'canceled', name: '已取消', short: '取消', hint: '任务已取消，可重新打开' },
+];
+
+const BOARD_PRIOS = [
+  { id: 'all', label: '全部' },
+  { id: 'P0', label: 'P0' },
+  { id: 'P1', label: 'P1' },
+  { id: 'P2', label: 'P2' },
+];
+
+function boardMatches(t) {
+  if (state.boardPriority !== 'all' && t.priority !== state.boardPriority) return false;
+  const q = state.boardQ.trim().toLowerCase();
+  if (!q) return true;
+  return [t.id, t.title, t.repo, t.owner, t.by, (t.tags || []).join(' ')].join(' ').toLowerCase().includes(q);
+}
+
 function viewBoard() {
   const tasks = tenantTasks();
-  const cols = [
-    { id: 'backlog', name: '积压事项' },
-    { id: 'todo', name: '待办事项' },
-    { id: 'in_progress', name: '进行中' },
-    { id: 'in_review', name: '审核中' },
-    { id: 'blocked', name: '已阻塞' },
-    { id: 'done', name: '完成' },
-    { id: 'canceled', name: '已取消' },
-  ];
   const order = { P0: 0, P1: 1, P2: 2 };
+  const activeStages = BOARD_STAGES.filter((c) => !['done', 'canceled'].includes(c.id));
+  const archivedStages = BOARD_STAGES.filter((c) => ['done', 'canceled'].includes(c.id));
+  const activeTasks = tasks.filter((t) => !['done', 'canceled'].includes(t.status));
+  const filteredActive = activeTasks.filter(boardMatches);
+  const filtering = !!state.boardQ.trim() || state.boardPriority !== 'all';
+  const summary = activeStages
+    .map((c) => ({ ...c, count: tasks.filter((t) => t.status === c.id).length }))
+    .filter((c) => c.count);
+  const lane = (c) => {
+    const total = tasks.filter((t) => t.status === c.id);
+    const list = total.filter(boardMatches).sort((a, b) => (a.order ?? order[a.priority]) - (b.order ?? order[b.priority]));
+    const compact = !total.length && !filtering;
+    return `
+      <div class="board-col ${compact ? 'is-empty' : ''}" data-status="${c.id}" data-total="${total.length}" aria-label="${c.name}">
+        <div class="board-col-head" title="${c.hint}">
+          <span class="col-dot"></span><span class="col-title">${c.name}</span>
+          <span class="col-count">${list.length}${list.length !== total.length ? `<small>/${total.length}</small>` : ''}</span>
+          <button class="icon-btn" aria-label="在${c.name}列新建任务" data-action="new-task" data-stage="${c.id}">${I.plus}</button>
+        </div>
+        ${compact
+          ? '<div class="lane-zero"><span>拖入任务</span></div>'
+          : list.length
+            ? list.map(taskCard).join('')
+            : `<div class="lane-empty">${filtering ? '没有匹配任务' : '该阶段暂无任务'}<button data-action="new-task" data-stage="${c.id}">新建任务</button></div>`}
+      </div>`;
+  };
   return `
-  <div class="view-head">
+  <div class="view-head board-head">
     <div>
-      <div class="view-title">任务板</div>
-      <div class="view-sub">任务唯一权威源 · Agent 只能将任务推进到「待验收」，人确认后自动完成</div>
+      <div class="view-title">任务板<span class="view-count">${activeTasks.length}</span></div>
+      <div class="view-sub">任务唯一权威源 · Agent 只能推进到「待验收」，人确认后完成</div>
     </div>
     <span class="source-tag"><span class="src-dot"></span>形态来源：dashi-taskboard · 验收门</span>
     <span class="spacer"></span>
     <button class="btn btn-primary" data-action="new-task">${I.plus} 新建任务</button>
   </div>
-  ${state.tenant === 'pay-settle' ? `<div class="hint-banner"><span>业务信号：退款结算反馈待处理。信息不完整时可在积压卡片内发起澄清，再确认任务契约。</span><button class="btn btn-sm" data-action="signal-task">${getTask('PAY-2048') ? '打开协作卡片 PAY-2048' : '从业务信号生成积压卡片'}</button></div>` : ''}
-  <div class="board">
-    ${cols.map((c) => {
-      const list = tasks.filter((t) => t.status === c.id).sort((a, b) => (a.order ?? order[a.priority]) - (b.order ?? order[b.priority]));
-      return `
-      <div class="board-col" data-status="${c.id}">
-        <div class="board-col-head"><span class="col-dot"></span><span class="col-title">${c.name}</span><span class="col-count">${list.length}</span></div>
-        ${list.map(taskCard).join('')}
-      </div>`;
-    }).join('')}
-  </div>`;
+  ${state.tenant === 'pay-settle' ? `<div class="signal-strip"><span class="signal-icon">${I.sparkle}</span><div><b>业务信号演示</b><span>退款结算反馈会先进入采集区，人工确认后创建积压卡。</span></div><button class="btn btn-sm" data-action="signal-task">填充演示卡</button></div>` : ''}
+  <div class="board-toolbar">
+    <div class="board-search">${I.search}<input data-role="board-q" aria-label="搜索任务" placeholder="搜索任务、仓库、负责人或标签" value="${esc(state.boardQ)}">${state.boardQ.trim() ? `<button class="search-clear" data-action="board-clear" aria-label="清空搜索">${I.x}</button>` : '<kbd>/</kbd>'}</div>
+    <div class="board-prio" role="group" aria-label="按优先级筛选">
+      ${BOARD_PRIOS.map((p) => `<button class="${state.boardPriority === p.id ? 'active' : ''}" data-action="board-prio" data-id="${p.id}" aria-pressed="${state.boardPriority === p.id}">${p.label}</button>`).join('')}
+    </div>
+    <span class="board-result">${filtering ? `${filteredActive.length} / ${activeTasks.length} 项匹配` : `${activeTasks.length} 项活跃任务`}</span>
+  </div>
+  <section class="board-section" aria-label="活跃任务阶段">
+    <div class="board-section-head">
+      <div><h2>进行中的工作流</h2><p>按阶段浏览任务；拖动卡片推进状态，系统会校验流转门禁与执行条件。</p></div>
+      <div class="board-summary">${summary.map((s) => `<span data-status="${s.id}"><i></i>${s.short} <b>${s.count}</b></span>`).join('')}</div>
+    </div>
+    <div class="board board-active">
+      ${activeStages.map(lane).join('')}
+    </div>
+  </section>
+  <details class="board-archive">
+    <summary><span class="archive-mark">${I.arrow}</span><span>已归档阶段</span><span class="archive-count">${archivedStages.reduce((n, c) => n + tasks.filter((t) => t.status === c.id).length, 0)}</span><span class="archive-hint">完成与取消的任务仍可回溯、重开</span></summary>
+    <div class="board board-archived">${archivedStages.map(lane).join('')}</div>
+  </details>`;
 }
 
 function taskCard(t) {
   const s = t.sessionId ? getSession(t.sessionId) : null;
   const running = s && s.status === 'running';
   const last = t.activity[t.activity.length - 1];
+  const owner = t.owner || t.by || '—';
+  let cta = '';
+  if (t.status === 'in_review') cta = `<button class="tc-cta review" data-action="open-task" data-id="${t.id}">${I.check} 进入验收${I.arrow}</button>`;
+  else if (t.status === 'in_progress') cta = s ? `<button class="tc-cta run" data-action="open-session" data-id="${s.id}">${I.chat} 查看执行${I.arrow}</button>` : `<button class="tc-cta" data-action="open-task" data-id="${t.id}">查看任务${I.arrow}</button>`;
+  else if (['backlog', 'confirming', 'blocked'].includes(t.status)) cta = `<button class="tc-cta clarify" data-action="clarify-route" data-task="${t.id}">${I.chat} ${t.status === 'backlog' ? (t.conversation ? '继续澄清' : '开始澄清') : t.status === 'blocked' ? '处理阻塞' : '继续澄清'}${I.arrow}</button>`;
+  else if (t.status === 'todo') cta = `<button class="tc-cta" data-action="open-task" data-id="${t.id}">${I.play} 准备派发${I.arrow}</button>`;
   return `
-  <div class="task-card" draggable="true" data-id="${t.id}" data-action="open-task">
+  <article class="task-card stage-${t.status}" draggable="true" data-id="${t.id}" data-action="open-task" data-stage="${t.status}" tabindex="0" aria-label="${esc(t.id + ' · ' + t.title)}">
     <div class="tc-top">
       <span class="tc-id">${t.id}</span>${prioPill(t.priority)}
-      <span class="spacer" style="flex:1"></span>
+      <span class="spacer"></span>
       ${running ? '<span class="tc-live"><span class="pulse-dot"></span>执行中</span>' : (t.agent ? agentChip(t.agent) : '')}
+      <span class="tc-owner" title="负责人：${esc(owner)}">${esc(owner[0] || '?')}</span>
     </div>
     <div class="tc-title">${esc(t.title)}</div>
-    <div class="tc-meta">${tagPills(t.tags.slice(0, 3))}</div>
+    ${t.tags.length ? `<div class="tc-meta">${tagPills(t.tags.slice(0, 3))}</div>` : ''}
+    ${running ? `<div class="tc-run"><span class="tc-run-bar"><i></i></span><span class="tc-run-text">${esc(s.current || '执行中…')}</span></div>` : ''}
     <div class="tc-foot">
-      <span>${I.branch}${esc(t.repo)}</span>
-      <span>${I.chat}${t.comments.length}</span>
-      ${t.cost ? `<span>${I.coin}${money(t.cost)}</span>` : ''}
-      <span style="margin-left:auto">${last ? timeAgo(last.ts) : ''}</span>
+      <span class="tc-repo" title="${esc(t.repo)}">${I.branch}${esc(t.repo)}</span>
+      <span class="tc-stat" title="评论数">${I.chat}${t.comments.length}</span>
+      ${t.cost ? `<span class="tc-stat" title="已归因成本">${I.coin}${money(t.cost)}</span>` : ''}
+      <span class="tc-age">${last ? timeAgo(last.ts) : ''}</span>
+    </div>
+    ${cta ? `<div class="tc-actions">${cta}</div>` : ''}
+  </article>`;
+}
+
+function sessionPillClass(status) {
+  return {
+    active: 'is-active', waiting_reply: 'is-waiting', awaiting_confirmation: 'is-confirm',
+    resolved: 'is-resolved', closed: 'is-closed', running: 'is-running',
+    paused: 'is-paused', completed: 'is-completed', failed: 'is-failed',
+  }[status] || 'is-closed';
+}
+
+function sessionKindInfo(s) {
+  if (s.kind === 'execution') {
+    const a = AGENTS[s.agent] || { glyph: 'AI', color: '#475467' };
+    return { label: '执行', glyph: a.glyph, color: a.color };
+  }
+  if (s.kind === 'sdk') return { label: 'SDK', glyph: 'SDK', color: '#059669' };
+  return { label: '澄清', glyph: 'AI', color: '#7c3aed' };
+}
+
+function sessionRows() {
+  return conversationRows()
+    .map((s) => ({ ...s, lastTs: (s.conversation?.messages || []).slice(-1)[0]?.ts || s.conversation?.startedAt || 0 }))
+    .concat(tenantSessions().map((s) => ({ ...s, kind: 'execution', lastTs: s.endedAt || s.startedAt })))
+    .sort((a, b) => b.lastTs - a.lastTs);
+}
+
+function sessionRow(s, cur) {
+  const t = getTask(s.taskId);
+  const kind = sessionKindInfo(s);
+  const active = cur?.id === s.id;
+  return `
+  <div class="sess-item ${active ? 'active' : ''}" data-action="open-session" data-id="${s.id}" tabindex="0" aria-current="${active}">
+    <span class="sess-kind-icon" style="--kind-color:${kind.color}">${esc(kind.glyph)}</span>
+    <div class="sess-item-main">
+      <div class="sess-item-id"><span>${esc(s.taskId)}</span><span class="sess-kind-tag" style="color:${kind.color}">${kind.label}</span></div>
+      <div class="sess-item-title">${esc(t?.title || '')}</div>
+      <div class="sess-item-meta"><span class="sess-status ${sessionPillClass(s.status)}"><i></i>${sessionLabel(s.status)}</span><span>·</span><span>${esc(s.id)}</span><span class="sess-item-time">${timeAgo(s.lastTs)}</span></div>
     </div>
   </div>`;
 }
 
-function viewSessions() {
-  const all = tenantSessions();
-  const filter = state.sessFilter;
-  const list = all.filter((s) => filter === 'all' || (filter === 'running' ? s.status === 'running' : s.status !== 'running'));
-  let cur = state.currentSession ? all.find((s) => s.id === state.currentSession) : null;
-  if (!cur) cur = list[0] || all[0] || null;
-  if (cur) state.currentSession = cur.id;
+function sessionCtx(t, cur) {
+  const isExec = cur.kind === 'execution';
   return `
-  <div class="view-head">
+  <header class="sess-ctx">
+    <div class="sess-ctx-main">
+      <div class="sess-ctx-meta">
+        <span class="ctx-id">${t.id}</span>
+        <span class="ctx-stage">任务阶段：<b>${STATUS[t.status].label}</b></span>
+        <span class="ctx-sep">·</span>
+        <span>${isExec ? '执行会话' : cur.kind === 'sdk' ? '来源系统 SDK 沟通' : 'Agent 澄清'}</span>
+      </div>
+      <button class="task-link" data-action="open-task" data-id="${t.id}">${esc(t.title)}${I.arrow}</button>
+    </div>
+    <div class="sess-ctx-actions">
+      <span class="pill session-pill ${sessionPillClass(cur.status)}">${sessionLabel(cur.status)}</span>
+      <button class="btn btn-sm" data-action="${isExec ? 'open-task' : 'conversation-close'}" data-id="${t.id}">${I.doc} ${isExec ? '打开任务' : '查看任务'}</button>
+    </div>
+  </header>`;
+}
+
+function viewSessions() {
+  const all = sessionRows();
+  const q = state.sessSearch.trim().toLowerCase();
+  const list = all.filter((s) => {
+    if (state.sessStage && state.sessStage !== 'all' && getTask(s.taskId).status !== state.sessStage) return false;
+    if (!q) return true;
+    return (s.taskId + ' ' + getTask(s.taskId).title + ' ' + s.id).toLowerCase().includes(q);
+  });
+  const cur = list.find((s) => s.id === state.currentSession) || list[0];
+  state.currentSession = cur?.id || null;
+  const t = cur && getTask(cur.taskId);
+  state.conversationTask = t?.id || null;
+  const stageCount = (id) => id === 'all' ? all.length : all.filter((s) => getTask(s.taskId).status === id).length;
+  const stageEntries = [['all', { label: '全部', short: '全部' }], ...Object.entries(STATUS).map(([id, v]) => [id, { ...v, short: BOARD_STAGES.find((s) => s.id === id)?.short || v.label }])];
+  const hiddenStages = stageEntries.filter(([k]) => k !== 'all' && stageCount(k) === 0 && state.sessStage !== k).length;
+  return `
+  <div class="view-head sessions-head">
     <div>
       <div class="view-title">会话台</div>
-      <div class="view-sub">Agent 执行现场 · 支持实时观察、中断与追加指令</div>
+      <div class="view-sub">澄清、执行与验收在同一任务上下文中连续发生</div>
     </div>
-    <span class="source-tag"><span class="src-dot"></span>形态来源：OpenHands Agent Canvas（ACP 多 Agent）</span>
+    <span class="source-tag"><span class="src-dot"></span>形态来源：OpenHands Agent Canvas · 会话流</span>
+    <span class="spacer"></span>
+    <span class="sessions-stat"><span class="sess-status is-running"><i></i>${all.filter((s) => s.status === 'running').length} 执行中</span>
+    <span class="sessions-stat"><span class="sess-status is-confirm"><i></i>${all.filter((s) => s.status === 'awaiting_confirmation').length} 待确认</span>
   </div>
   <div class="sessions-layout">
-    <div class="sess-list">
-      <div class="sess-tabs">
-        ${[['all', '全部'], ['running', '运行中'], ['done', '已完成']].map(([k, label]) => `<button class="sess-tab ${filter === k ? 'active' : ''}" data-action="sess-tab" data-id="${k}">${label}</button>`).join('')}
+    <section class="sess-list" aria-label="任务会话列表">
+      <div class="sess-list-head"><div><h2>任务会话</h2><p>澄清与执行线程</p></div><span class="sess-total">${list.length}</span></div>
+      <div class="sess-search">${I.search}<input id="sessSearch" aria-label="搜索任务或会话" placeholder="搜索任务或会话" value="${esc(state.sessSearch || '')}">${state.sessSearch ? `<button class="search-clear" data-action="sess-clear" aria-label="清空搜索">${I.x}</button>` : ''}</div>
+      <div class="sess-stage-block">
+        <span class="sess-filter-label">任务阶段</span>
+        <nav class="sess-stage-nav ${state.sessShowAllStages ? 'show-all' : ''}" aria-label="任务阶段">${stageEntries.map(([k, v]) => `<button class="sess-tab ${state.sessStage === k ? 'active' : ''} ${stageCount(k) === 0 ? 'is-zero' : ''}" data-action="sess-stage" data-id="${k}" aria-pressed="${state.sessStage === k}">${v.short}<span>${stageCount(k)}</span></button>`).join('')}</nav>
+        ${hiddenStages ? `<button class="sess-stage-more" data-action="sess-stage-more">${state.sessShowAllStages ? '收起零会话阶段' : '显示全部阶段'}${I.chevron}</button>` : ''}
       </div>
-      <div class="sess-items">
-        ${list.length ? list.map((s) => {
-          const t = getTask(s.taskId);
-          return `
-          <div class="sess-item ${cur && s.id === cur.id ? 'active' : ''}" data-action="open-session" data-id="${s.id}">
-            <div class="sess-item-top">
-              <span class="sess-item-id">${s.id}</span>
-              ${s.status === 'running' ? '<span class="pulse-dot"></span>' : ''}
-              <span class="spacer" style="flex:1"></span>
-              <span style="font-size:10.5px;color:var(--text-3)">${timeAgo(s.startedAt)}</span>
-            </div>
-            <div class="sess-item-title">${t.id} · ${esc(t.title)}</div>
-            <div class="sess-item-meta">${agentChip(s.agent)}<span>${s.status === 'running' ? '执行中' : s.status === 'failed' ? '失败' : '已完成'}</span>${s.cost ? `<span>${money(s.cost)}</span>` : ''}</div>
-          </div>`;
-        }).join('') : '<div class="empty">没有符合条件的会话</div>'}
-      </div>
-    </div>
-    ${cur ? sessionDetail(cur) : `
-    <div class="sess-detail">
-      <div class="empty" style="margin:auto">${I.chat}<br>选择左侧会话查看执行现场<br>或在任务板将任务派发给 Agent 创建新会话</div>
-    </div>`}
+      <div class="sess-items">${list.map((s) => sessionRow(s, cur)).join('') || `<div class="sess-list-empty">${I.search}<b>没有匹配的会话</b><span>调整阶段或搜索条件</span></div>`}</div>
+      <div class="sess-list-foot"><span><i class="sess-kind-icon mini" style="--kind-color:#7c3aed">AI</i>澄清</span><span><i class="sess-kind-icon mini" style="--kind-color:#059669">SDK</i>来源沟通</span><span><i class="sess-kind-icon mini" style="--kind-color:#2563eb">CX</i>执行</span></div>
+    </section>
+    ${cur ? `<section class="sess-workspace">${sessionCtx(t, cur)}${cur.kind === 'execution' ? sessionDetail(cur) : `<div class="sess-detail clarification-detail">${renderConversation(t, true)}</div>`}</section>${lifecyclePanel(t, cur)}` : `<section class="sess-empty">${I.chat}<h2>选择一个会话</h2><p>从左侧任务线程进入，或到任务板打开一个任务开始澄清、派发与验收。</p><button class="btn btn-primary" data-action="nav" data-view="board">前往任务板</button></section>`}
   </div>`;
 }
 
 function sessionDetail(s) {
   const t = getTask(s.taskId);
   const elapsed = s.status === 'running'
-    ? Math.max(1, Math.round((Date.now() - s.startedAt) / minute)) + ' 分钟（进行中）'
+    ? Math.max(1, Math.round((Date.now() - s.startedAt) / minute)) + ' 分钟 · 进行中'
     : Math.max(1, Math.round(((s.endedAt || Date.now()) - s.startedAt) / minute)) + ' 分钟';
   const trace = 'lf_' + String((parseInt(s.id.replace('S-', ''), 10) * 7) % 9999).padStart(4, '0');
   return `
   <div class="sess-detail">
-    <div class="sess-ctx">
-      <button class="task-link" data-action="open-task" data-id="${t.id}">${t.id} · ${esc(t.title)}</button>
-      <span class="ctx-meta">${esc(t.repo)}${t.branch ? ' @ ' + esc(t.branch) : ''}</span>
-      ${agentChip(s.agent)}
-      <span class="pill status-${s.status}"><span class="p-dot" style="background:currentColor"></span>${s.status === 'running' ? '执行中' : s.status === 'failed' ? '失败' : '已完成'}</span>
-      <span class="ctx-meta">耗时 ${elapsed}</span>
-      <span class="spacer" style="flex:1"></span>
-      <span class="ctx-meta">trace: ${trace}</span>
+    <div class="session-subhead">
+      <div class="subhead-agent">${agentChip(s.agent)}<span class="subhead-repo">${esc(t.repo)}</span></div>
+      <div class="subhead-meta"><span>耗时 ${elapsed}</span><span>·</span><span>${sessionLabel(s.status)}</span></div>
+      <small>trace: ${trace}</small>
     </div>
     <div class="sess-events" id="sessEvents">
       ${s.events.map((e) => renderEvent(e, s)).join('')}
     </div>
-    <div class="sess-statusline" id="sessStatus">${s.status === 'running'
-      ? `<span class="pulse-dot"></span><span>正在执行：</span><span class="mono">${esc(s.current || '…')}</span><span class="caret"></span>`
-      : s.status === 'failed'
-        ? '<span style="color:var(--red);font-weight:600">会话失败</span><span>· 任务已按策略回退，可重新派发</span>'
-        : '<span style="color:var(--green);font-weight:600">会话已完成</span><span>· 产出已作为证据提交至任务待验收</span>'}
+    <div class="composer-dock">
+      <div class="sess-statusline" id="sessStatus">${s.status === 'running'
+        ? `<span class="pulse-dot"></span><span>正在执行：</span><span class="mono">${esc(s.current || '…')}</span><span class="caret"></span>`
+        : ['paused','closed'].includes(s.status) ? '<span>执行已停止 · 在右侧处理任务下一步</span>' : s.status === 'failed'
+          ? '<span style="color:var(--red);font-weight:600">会话失败</span><span>· 任务已按策略回退，可重新派发</span>'
+          : '<span style="color:var(--green);font-weight:600">会话已完成</span><span>· 产出已作为证据提交至任务待验收</span>'}
+      </div>
+      <form class="sess-composer" data-form="composer" data-id="${s.id}">
+        <textarea rows="1" ${s.status !== 'running' ? 'disabled' : ''} placeholder="追加指令或反馈（例如：边界条件需补充港澳台格式）…" data-role="composer-input">${esc(s.draft || '')}</textarea>
+        <button class="btn btn-primary" type="submit" ${s.status !== 'running' ? 'disabled' : ''}>发送</button>
+      </form>
+      <div class="composer-meta"><span>${s.status === 'running' ? '追加指令将在当前步骤完成后纳入处理' : '会话已结束，输入已锁定'}</span><span>${s.status === 'running' ? '⌘ / Ctrl + Enter 发送' : ''}</span></div>
     </div>
-    <form class="sess-composer" data-form="composer" data-id="${s.id}">
-      <input placeholder="追加指令或反馈（例如：边界条件需补充港澳台格式）…" data-role="composer-input">
-      <button class="btn btn-primary" type="submit">发送</button>
-    </form>
   </div>`;
 }
 
 function renderEvent(e, s) {
   if (e.type === 'system') return `<div class="ev ev-system"><span>${esc(e.text)}</span></div>`;
   if (e.type === 'user') return `<div class="ev ev-user"><div class="bubble">${esc(e.text)}</div></div>`;
-  if (e.type === 'think') return `<div class="ev ev-thought"><div class="t-icon">${I.sparkle}</div><div class="t-body">${esc(e.text)}</div></div>`;
+  if (e.type === 'think') return `<details class="ev ev-thought"><summary>思考过程</summary><div class="t-body">${esc(e.text)}</div></details>`;
   if (e.type === 'term') return `
     <div class="ev"><div class="terminal">
       <div class="term-head"><span class="tdot"></span><span class="tdot"></span><span class="tdot"></span><span class="term-title">agent-shell · container</span></div>
       <div class="term-body"><span class="tp">$ </span><span class="tc">${esc(e.cmd)}</span>
-<span class="tout">${esc(e.out)}</span></div>
+<details><summary>工具输出</summary><pre class="tout">${esc(e.out)}</pre></details></div>
     </div>
     ${e.exit !== undefined ? `<div class="exit-tag ${e.exit === 0 ? 'ok' : 'bad'}">exit code ${e.exit}</div>` : ''}
     </div>`;
