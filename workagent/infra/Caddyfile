@@ -1,0 +1,22 @@
+(workagent-api) {
+ @webhook path_regexp webhook ^/v1/channels/(feishu|dingtalk)/([^/]+)/webhook$
+ handle @webhook {
+  rewrite * /{re.webhook.1}/{re.webhook.2}
+  reverse_proxy channel:4101
+ }
+ handle /v1/* {
+  reverse_proxy api:4100
+ }
+}
+{$CONSOLE_HOST} {
+ import workagent-api
+ handle {
+  reverse_proxy console:8080
+ }
+}
+{$PORTAL_HOST} {
+ import workagent-api
+ handle {
+  reverse_proxy portal:8080
+ }
+}

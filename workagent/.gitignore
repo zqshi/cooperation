@@ -1,0 +1,19 @@
+node_modules
+.pnpm-store
+dist
+.env
+.env.local
+data
+coverage
+*.log
+.DS_Store
+.tsbuildinfo
+
+.env.*
+!.env.example
+test-results
+playwright-report
+
+# Generated verification evidence (never product documentation)
+docs/verification/
+*.png.actual

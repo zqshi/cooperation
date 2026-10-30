@@ -1,0 +1,129 @@
+name: workagent-production
+x-app: &app
+  build: { context: ../.., dockerfile: infra/Dockerfile, target: runtime }
+  env_file: [../../.env.production]
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  volumes: [artifacts:/app/data/artifacts]
+  depends_on:
+    postgres: { condition: service_healthy }
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: workagent
+      POSTGRES_DB: workagent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+    volumes: [postgres:/var/lib/postgresql/data]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U workagent -d workagent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  migrate:
+    <<: *app
+    restart: "no"
+    command: [pnpm, db:migrate]
+  api:
+    <<: *app
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:4100/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+  worker:
+    <<: *app
+    command: [pnpm, --filter, "@workagent/worker", start]
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "const fs=require('fs');process.exit(Date.now()-Number(fs.readFileSync('/tmp/workagent-worker-health','utf8'))<45000?0:1)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+  channel:
+    <<: *app
+    command: [pnpm, --filter, "@workagent/channel", start]
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:4101/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      api: { condition: service_healthy }
+  console:
+    build: { context: ../.., dockerfile: infra/Dockerfile, target: console }
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+  portal:
+    build: { context: ../.., dockerfile: infra/Dockerfile, target: portal }
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+  proxy:
+    image: caddy:2.10-alpine
+    environment:
+      CONSOLE_HOST: ${CONSOLE_HOST:?required}
+      PORTAL_HOST: ${PORTAL_HOST:?required}
+    ports: ["80:80", "443:443"]
+    volumes:
+      [
+        "../Caddyfile:/etc/caddy/Caddyfile:ro",
+        "caddy:/data",
+        "caddy-config:/config",
+      ]
+    depends_on:
+      api: { condition: service_healthy }
+      console: { condition: service_started }
+      portal: { condition: service_started }
+    restart: unless-stopped
+volumes:
+  postgres:
+  artifacts:
+  caddy:
+  caddy-config:

@@ -1,0 +1,119 @@
+name: WorkAgent
+on:
+  push:
+    paths:
+      [
+        "**/workagent/**",
+        "workagent/**",
+        ".github/workflows/workagent.yml",
+        "apps/**",
+        "packages/**",
+        "scripts/**",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.base.json",
+        ".npmrc",
+      ]
+  pull_request:
+    paths:
+      [
+        "**/workagent/**",
+        "workagent/**",
+        ".github/workflows/workagent.yml",
+        "apps/**",
+        "packages/**",
+        "scripts/**",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.base.json",
+        ".npmrc",
+      ]
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: workagent
+          POSTGRES_PASSWORD: workagent
+          POSTGRES_DB: workagent_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd 'pg_isready -U workagent -d workagent_test'
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgres://workagent:workagent@localhost:5432/workagent_test
+      TEST_PGVECTOR: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate standalone or nested checkout
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          matches = [p.parent for p in Path('.').rglob('pnpm-workspace.yaml') if 'node_modules' not in p.parts and json.loads((p.parent / 'package.json').read_text()).get('name') == 'workagent']
+          if len(matches) != 1:
+              raise SystemExit(f'Expected one WorkAgent workspace, found {matches}')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f'WA_DIR={matches[0]}\n')
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install --global pnpm@11.4.0
+      - run: pnpm install --frozen-lockfile
+        working-directory: ${{ env.WA_DIR }}
+      - name: Verify two-product boundaries, types, bundles and database isolation
+        run: pnpm typecheck && pnpm build && pnpm test
+        working-directory: ${{ env.WA_DIR }}
+
+      - name: Security audit (high and critical block)
+        run: pnpm audit --audit-level=high
+        working-directory: ${{ env.WA_DIR }}
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+        working-directory: ${{ env.WA_DIR }}
+      - name: Real browser acceptance
+        run: pnpm test:browser
+        working-directory: ${{ env.WA_DIR }}
+      - name: Build production runtime and both products
+        run: |
+          docker build -f infra/Dockerfile --target runtime -t workagent-runtime:ci .
+          docker build -f infra/Dockerfile --target console -t workagent-console:ci .
+          docker build -f infra/Dockerfile --target portal -t workagent-portal:ci .
+        working-directory: ${{ env.WA_DIR }}
+      - name: Validate production Compose and Caddy
+        run: |
+          cp .env.production.example .env.production
+          docker compose --env-file .env.production -f infra/compose/production.yml config --quiet
+          docker run --rm -e CONSOLE_HOST=console.example.com -e PORTAL_HOST=portal.example.com -v "$PWD/infra/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+        working-directory: ${{ env.WA_DIR }}
+      - name: Smoke both production static images
+        run: |
+          set -eu
+          trap 'docker rm -f wa-ci-console wa-ci-portal || true' EXIT
+          docker run -d --name wa-ci-console --read-only --cap-drop ALL --security-opt no-new-privileges:true -p 127.0.0.1:18073:8080 workagent-console:ci
+          docker run -d --name wa-ci-portal --read-only --cap-drop ALL --security-opt no-new-privileges:true -p 127.0.0.1:18074:8080 workagent-portal:ci
+          node --input-type=module <<'JS'
+          for (const port of [18073,18074]) {
+            const base=`http://127.0.0.1:${port}`;
+            for(let i=0;i<30;i++){try{if((await fetch(base+'/healthz')).ok)break;}catch{}await new Promise(r=>setTimeout(r,500));}
+            const root=await fetch(base+'/');if(root.status!==200)throw new Error('Root URL failed');
+            const asset=(await root.text()).match(/src="([^"]+\.js)"/)?.[1];if(!asset)throw new Error('Missing JS bundle');
+            for(const [url,method,status]of [['/','HEAD',200],['/deep/spa','GET',200],[asset,'GET',200],['/missing.js','GET',404]])if((await fetch(base+url,{method})).status!==status)throw new Error(`${port} ${url} failed`);
+          }
+          JS
+        working-directory: ${{ env.WA_DIR }}
+      - name: Retain browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workagent-browser-diagnostics
+          path: |
+            ${{ env.WA_DIR }}/test-results
+            ${{ env.WA_DIR }}/playwright-report
+          if-no-files-found: ignore
