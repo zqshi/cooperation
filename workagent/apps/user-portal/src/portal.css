@@ -1,0 +1,244 @@
+/* Portal-only layouts; enterprise console forms are unaffected. */
+.wa-personal-identity {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr) auto;
+  gap: 20px;
+  align-items: center;
+}
+.wa-personal-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  margin: 0;
+}
+.wa-personal-form input,
+.wa-personal-form textarea,
+.wa-personal-form select {
+  width: 100%;
+  min-width: 0;
+}
+.wa-personal-form button[type="submit"] {
+  justify-self: start;
+}
+@media (max-width: 639px) {
+  .wa-personal-identity {
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 16px;
+  }
+  .wa-personal-identity > [aria-label="搭档头像"] {
+    width: 64px;
+    height: 64px;
+  }
+  .wa-personal-identity > button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+.wa-personal-usage-table {
+  min-width: 440px;
+}
+.wa-personal-usage-table th,
+.wa-personal-usage-table td {
+  padding: 12px 16px 12px 0;
+}
+.wa-bootstrap {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.wa-provision {
+  min-height: 100dvh;
+  background: radial-gradient(ellipse at top, #edf3ff, #f8fafc 60%);
+}
+.wa-provision-header {
+  max-width: 1200px;
+  margin: auto;
+  padding: 24px 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.wa-provision-header > div {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 14px;
+  color: #64748b;
+}
+.wa-provision-header button {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: white;
+  color: #334155;
+}
+.wa-provision-main {
+  width: min(100%, 680px);
+  margin: auto;
+  padding: 24px 24px 64px;
+}
+.wa-provision-intro {
+  text-align: center;
+  margin-bottom: 28px;
+}
+.wa-provision-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  background: white;
+  border-radius: 18px;
+  color: #2563eb;
+  font-size: 32px;
+  box-shadow: 0 6px 24px #2563eb12;
+}
+.wa-provision-intro h1 {
+  font-size: 28px;
+  font-weight: 600;
+  margin: 16px 0 10px;
+}
+.wa-provision-intro p {
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.8;
+}
+@media (max-width: 639px) {
+  .wa-provision-header {
+    padding: 20px;
+  }
+  .wa-provision-main {
+    padding: 16px 16px 40px;
+  }
+  .wa-provision-header > div {
+    gap: 10px;
+  }
+}
+
+.wa-project-directory {
+  display: grid;
+  gap: 24px;
+}
+.wa-project-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 32px;
+  background: linear-gradient(120deg, #eff6ff, #f8fafc);
+  border: 1px solid #dbeafe;
+  border-radius: 20px;
+}
+.wa-project-total {
+  font-size: 42px;
+  color: #1d4ed8;
+  text-align: center;
+  min-width: 110px;
+}
+.wa-project-total small {
+  display: block;
+  font-size: 12px;
+  color: #64748b;
+}
+.wa-project-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+.wa-project-card {
+  display: block;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: white;
+  padding: 24px;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+  min-width: 0;
+}
+.wa-project-card:hover,
+.wa-project-card:focus-visible {
+  border-color: #93c5fd;
+  box-shadow: 0 8px 24px #2563eb0d;
+}
+.wa-project-symbol {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-right: 14px;
+  border-radius: 12px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-weight: 600;
+}
+.wa-project-card h3 {
+  margin: 20px 0 10px;
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.wa-project-card p {
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wa-project-card footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid #f1f5f9;
+  font-size: 12px;
+  color: #64748b;
+}
+.wa-project-card footer strong {
+  color: #2563eb;
+  font-weight: 500;
+}
+@media (max-width: 639px) {
+  .wa-project-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .wa-project-intro {
+    padding: 24px;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .wa-project-total {
+    font-size: 28px;
+    text-align: left;
+  }
+  .wa-project-card {
+    padding: 20px;
+  }
+}
+
+/* Override the shared compact inline-form baseline only for automation dialogs. */
+.wa-automation-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 20px;
+  margin: 0;
+}
+.wa-automation-form input:not([type="checkbox"]),
+.wa-automation-form select,
+.wa-automation-form textarea {
+  width: 100%;
+  min-width: 0;
+}
+.wa-automation-form > label {
+  flex-direction: row;
+  align-items: center;
+  flex: none;
+}
+.wa-automation-form input[type="checkbox"] {
+  width: auto;
+  flex: none;
+}
