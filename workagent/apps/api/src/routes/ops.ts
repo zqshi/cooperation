@@ -1,14 +1,87 @@
 import { config } from "@workagent/config";
 import type { FastifyInstance } from "fastify";
 import { one, query } from "@workagent/db";
-import { canOperate, canBuild, runAccessSql, forbidden } from "@workagent/core";
+import {
+  canOperate,
+  canBuild,
+  runAccessSql,
+  forbidden,
+  modelReady,
+} from "@workagent/core";
 import { requireAudit, requireManage } from "../lib/guards.js";
 
 export async function opsRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/execution-readiness", async () => ({
-    modelConfigured: Boolean(config.modelApiKey),
-    canExecute: Boolean(config.modelApiKey) || config.useMockModel,
-  }));
+  app.get("/authorization-catalog", async (request) => {
+    if (!canBuild(request.user) && request.user.role !== "auditor")
+      throw forbidden();
+    const counts = await query<{ role: string; count: number }>(
+      "SELECT role,count(*)::int AS count FROM membership WHERE org_id=$1 AND status='active' GROUP BY role",
+      [request.user.orgId],
+    );
+    const members = Object.fromEntries(
+      counts.map((row) => [row.role, row.count]),
+    );
+    const roles = [
+      "owner",
+      "admin",
+      "builder",
+      "operator",
+      "user",
+      "auditor",
+    ].map((role) => ({
+      role,
+      activeMembers: members[role] ?? 0,
+      permissions: {
+        manage: role === "owner" || role === "admin",
+        build: ["owner", "admin", "builder"].includes(role),
+        operate: ["owner", "admin", "builder", "operator"].includes(role),
+        audit: ["owner", "admin", "auditor"].includes(role),
+        personalWork: [
+          "owner",
+          "admin",
+          "builder",
+          "operator",
+          "user",
+        ].includes(role),
+      },
+    }));
+    return {
+      roles,
+      capabilities: [
+        {
+          key: "manage",
+          label: "企业管理",
+          description: "企业配置、成员、渠道、配额及管理凭证",
+        },
+        {
+          key: "build",
+          label: "Agent 构建",
+          description: "构建、评测并发布企业 Agent 与资源",
+        },
+        {
+          key: "operate",
+          label: "执行运营",
+          description: "发起并处理获授权的企业执行",
+        },
+        {
+          key: "audit",
+          label: "审计与成本",
+          description: "读取企业范围审计与用量汇总",
+        },
+        {
+          key: "personalWork",
+          label: "个人工作",
+          description: "使用本人私人搭档、自动化和项目成员权限",
+        },
+      ],
+      assignment:
+        "角色通过成员管理页分配；服务端按固定角色政策执行，每次资源请求仍检查企业与成员授权。",
+    };
+  });
+  app.get("/execution-readiness", async (request) => {
+    const ready = await modelReady(request.user.orgId, config.modelName);
+    return { modelConfigured: ready, canExecute: ready || config.useMockModel };
+  });
   app.get("/tenant-home", async (request) => {
     const u = request.user;
     if (!["owner", "admin", "builder", "auditor"].includes(u.role))
@@ -50,7 +123,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
         ...runs,
       },
       readiness: {
-        modelConfigured: Boolean(config.modelApiKey),
+        modelConfigured: await modelReady(u.orgId, config.modelName),
         publishedAgent: resources!.published > 0,
         configuredChannels: resources!.configured,
         verifiedChannels: null,

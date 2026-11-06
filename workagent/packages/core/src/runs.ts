@@ -215,6 +215,15 @@ export async function createRun(
     ? async <T>(fn: (client: PoolClient) => Promise<T>) => fn(transactionClient)
     : tx;
   return transact(async (client) => {
+    if (
+      !(
+        await client.query(
+          "SELECT id FROM org WHERE id=$1 AND status='active' FOR SHARE",
+          [input.orgId],
+        )
+      ).rowCount
+    )
+      throw notFound("企业已停用");
     const localOne = async <T>(sql: string, params: unknown[]) =>
       (await client.query(sql, params)).rows[0] as T | undefined;
     const fingerprint = stableChecksum({

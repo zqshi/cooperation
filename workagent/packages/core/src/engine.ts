@@ -263,6 +263,7 @@ async function loop(
     }
 
     const result = await chatCompletion({
+      orgId: run.org_id,
       definition,
       messages: checkpoint.messages,
       tools: toolDefs,
@@ -680,6 +681,13 @@ async function ensureLimits(
 }
 
 async function ensureNotCanceled(runId: string): Promise<void> {
+  if (
+    !(await one(
+      "SELECT o.id FROM org o JOIN agent_run r ON r.org_id=o.id WHERE r.id=$1 AND o.status='active'",
+      [runId],
+    ))
+  )
+    throw new AppError(403, "execution_access_revoked", "企业已停用");
   const row = await one<{ status: string; authorized: boolean }>(
     `SELECT r.status, EXISTS(SELECT 1 FROM membership m WHERE m.org_id=r.org_id AND m.user_id=r.user_id AND m.status='active') AND EXISTS(SELECT 1 FROM agent a WHERE a.id=r.agent_id AND a.org_id=r.org_id AND (a.personal_owner_id IS NULL OR (a.personal_owner_id=r.user_id AND r.project_id IS NULL))) AND (r.project_id IS NULL OR EXISTS(SELECT 1 FROM project_member pm WHERE pm.project_id=r.project_id AND pm.org_id=r.org_id AND pm.user_id=r.user_id AND pm.role!='viewer')) AS authorized FROM agent_run r WHERE r.id=$1`,
     [runId],

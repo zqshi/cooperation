@@ -2,6 +2,9 @@ import crypto from "node:crypto";
 import { config } from "@workagent/config";
 import type { AgentDefinition, ToolPlanItem } from "@workagent/contracts";
 import { AppError } from "./errors.js";
+import { one } from "@workagent/db";
+import { decryptSecret } from "./crypto.js";
+import { toolFetch } from "./network.js";
 
 export type ChatMessage = {
   role: "system" | "user" | "assistant" | "tool";
@@ -10,6 +13,17 @@ export type ChatMessage = {
   tool_call_id?: string;
   name?: string;
 };
+
+export async function modelReady(
+  orgId: string,
+  model: string,
+): Promise<boolean> {
+  const row = await one<{ enabled: boolean }>(
+    "SELECT enabled FROM model_connection WHERE org_id=$1 AND model=$2",
+    [orgId, model],
+  );
+  return row ? row.enabled : Boolean(config.modelApiKey);
+}
 
 export type ToolCall = {
   id: string;
@@ -64,6 +78,7 @@ export function toToolDefinitions(toolPlan: {
 }
 
 export async function chatCompletion(input: {
+  orgId?: string;
   definition: AgentDefinition;
   messages: ChatMessage[];
   tools: ToolDefinition[];
@@ -73,7 +88,22 @@ export async function chatCompletion(input: {
     return mockChat(input);
   }
 
-  if (!config.modelApiKey)
+  const connection = input.orgId
+    ? await one<{
+        base_url: string;
+        api_key_encrypted: string;
+        enabled: boolean;
+      }>(
+        "SELECT base_url,api_key_encrypted,enabled FROM model_connection WHERE org_id=$1 AND model=$2",
+        [input.orgId, input.definition.model.model],
+      )
+    : null;
+  if (connection && !connection.enabled)
+    throw new AppError(503, "model_disabled", "企业模型已停用");
+  const apiKey = connection
+    ? decryptSecret(connection.api_key_encrypted)
+    : config.modelApiKey;
+  if (!apiKey)
     throw new AppError(503, "model_unconfigured", "Model credentials required");
   const body: Record<string, unknown> = {
     model: input.definition.model.model,
@@ -86,13 +116,17 @@ export async function chatCompletion(input: {
     body.tool_choice = "auto";
   }
 
-  const response = await fetch(
-    `${config.modelBaseUrl.replace(/\/$/, "")}/chat/completions`,
+  const modelFetch = connection
+    ? (url: string, init: Parameters<typeof fetch>[1]) =>
+        toolFetch(url, init as unknown as Parameters<typeof toolFetch>[1], "model")
+    : fetch;
+  const response = await modelFetch(
+    `${(connection?.base_url ?? config.modelBaseUrl).replace(/\/$/, "")}/chat/completions`,
     {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${config.modelApiKey}`,
+        authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
       signal: input.signal ?? AbortSignal.timeout(120_000),

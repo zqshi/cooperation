@@ -35,6 +35,11 @@ import "./types.js";
 import { requireBuild } from "./lib/guards.js";
 import { platformRoutes } from "./routes/platform.js";
 import { projectRoutes } from "./routes/projects.js";
+import { managementRoutes } from "./routes/management.js";
+import { modelRoutes } from './routes/models.js';
+import {runtimeRegistryRoutes} from './routes/runtime-registry.js';
+import {platformScheduleRoutes} from './routes/platform-schedules.js';
+import {gatewayRoutes} from './routes/gateway.js';
 
 const PUBLIC_PREFIXES = [
   "/v1/platform-auth/login",
@@ -227,6 +232,11 @@ export async function buildServer(
   }));
 
   await app.register(platformRoutes, { prefix: "/v1/platform" });
+  await app.register(managementRoutes, { prefix: "/v1" });
+  await app.register(modelRoutes, { prefix: '/v1' });
+  await app.register(runtimeRegistryRoutes,{prefix:'/v1/platform'});
+  await app.register(platformScheduleRoutes,{prefix:'/v1/platform'});
+  await app.register(gatewayRoutes,{prefix:'/v1/platform'});
   await app.register(queueRoutes, { prefix: "/v1" });
   await app.register(projectRoutes, { prefix: "/v1" });
   await app.register(authRoutes, { prefix: "/v1" });

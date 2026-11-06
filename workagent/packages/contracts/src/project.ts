@@ -34,6 +34,12 @@ export type PlatformOverview = {
   activeMemberCount: number;
 };
 export type PlatformTenant = {
+  industry:string;
+  companySize:string;
+  contactPhone:string;
+  description:string;
+  status: "active" | "suspended" | "archived";
+  statusReason: string;
   id: string;
   name: string;
   slug: string;

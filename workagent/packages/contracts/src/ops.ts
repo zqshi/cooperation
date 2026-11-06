@@ -75,6 +75,10 @@ export const tenantConfigurationSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     plan: z.enum(["trial", "team", "enterprise"]),
+    industry:z.string().trim().max(120).default(''),
+    companySize:z.string().trim().max(80).default(''),
+    contactPhone:z.string().trim().max(80).default(''),
+    description:z.string().max(2000).default(''),
   })
   .strict();
 export const createTenantSchema = tenantConfigurationSchema
@@ -113,6 +117,7 @@ export type PlatformTenantDetail = import("./project.js").PlatformTenant & {
 export type PlatformAuditRow = {
   id: string;
   userId: string;
+  userEmail:string;
   action: string;
   orgId: string | null;
   metadata: Record<string, unknown>;

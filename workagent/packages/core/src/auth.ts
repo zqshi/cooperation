@@ -50,7 +50,7 @@ export async function login(
 
   const membership = await one<{ org_id: string; role: Role }>(
     `SELECT m.org_id, m.role
-       FROM membership m
+       FROM membership m JOIN org o ON o.id=m.org_id AND o.status='active'
       WHERE m.user_id = $1 AND m.status = 'active'
       ORDER BY m.created_at
       LIMIT 1`,
@@ -94,7 +94,7 @@ export async function getSessionUser(
        JOIN app_user u ON u.id = s.user_id
        JOIN membership m ON m.user_id = s.user_id AND m.org_id = s.org_id
        JOIN org o ON o.id = s.org_id
-      WHERE s.token_hash = $1 AND s.expires_at > now() AND m.status = 'active'
+      WHERE s.token_hash = $1 AND s.expires_at > now() AND m.status = 'active' AND o.status='active'
       LIMIT 1`,
     [sha256(token)],
   );

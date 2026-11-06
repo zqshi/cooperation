@@ -123,6 +123,14 @@ END $$`);
     "012_personal_assistant.sql",
     "013_personal_automation.sql",
     "014_default_projects.sql",
+    "015_tenant_lifecycle.sql",
+    "016_management_catalog.sql",
+    "017_model_connections.sql",
+    "018_tenant_profile.sql",
+    "019_runtime_registry.sql",
+    "020_system_scheduler.sql",
+    "021_gateway_egress.sql",
+    "022_portal_sessions.sql",
   ])
     await db.query(
       await fs.readFile(
@@ -373,14 +381,22 @@ describe.sequential("real project authorization and isolation", () => {
     const tenants = (await call("member", "GET", "/platform/tenants")).json()
       .items;
     expect(tenants.map((t: { id: string }) => t.id).sort()).toEqual(["a", "b"]);
-    expect(Object.keys(tenants[0]).sort()).toEqual([
-      "activeMemberCount",
-      "createdAt",
-      "id",
-      "name",
-      "plan",
-      "slug",
-    ]);
+    expect(Object.keys(tenants[0]).sort()).toEqual(
+      [
+        "activeMemberCount",
+        "createdAt",
+        "id",
+        "name",
+        "plan",
+        "slug",
+        "status",
+        "statusReason",
+        "companySize",
+        "contactPhone",
+        "description",
+        "industry",
+      ].sort(),
+    );
     expect((await call("member", "GET", "/members")).statusCode).toBe(403);
     expect((await call("member", "GET", "/skills")).statusCode).toBe(403);
     expect((await call("member", "GET", `/projects/${p1}`)).statusCode).toBe(
@@ -2790,6 +2806,12 @@ describe.sequential("product recovery lifecycle and read isolation", () => {
         "runCount",
         "storageBytes",
         "costUsd",
+        "status",
+        "statusReason",
+        "companySize",
+        "contactPhone",
+        "description",
+        "industry",
       ].sort(),
     );
     expect(
@@ -2957,6 +2979,14 @@ describe.sequential("personal Portal ownership and safe release", () => {
   const profile = {
     name: "Private fixture partner",
     avatar: "leaf",
+    role: "需求分析伙伴",
+    mission: "把复杂需求拆解为可执行步骤",
+    selfIntroduction: "先整理事实，再标注未知项。",
+    userContext: "负责企业产品规划。",
+    styleTags: ["先结论", "严谨"],
+    personalSkills: [{ name: "会议整理", instruction: "列出结论和负责人" }],
+    knowledgeEntries: [{ title: "团队术语", content: "PM 指项目负责人" }],
+    memoryEntries: [{ content: "先展示结论" }],
     purpose: "PRIVATE duties: review requirements",
     preferences: "PRIVATE preference: ask before guessing",
   };
@@ -2980,9 +3010,48 @@ describe.sequential("personal Portal ownership and safe release", () => {
       definition: { approval: { mode: string } };
     };
     expect(bootstrap.systemPrompt).toContain(profile.preferences);
+    expect(bootstrap.systemPrompt).toContain(profile.role);
+    expect(bootstrap.systemPrompt).toContain(profile.userContext);
+    expect(bootstrap.systemPrompt).toContain(profile.styleTags.join("、"));
+    expect(bootstrap.systemPrompt).toContain(profile.personalSkills[0]!.instruction);
+    expect(bootstrap.systemPrompt).toContain(profile.knowledgeEntries[0]!.content);
+    expect(bootstrap.systemPrompt).toContain(profile.memoryEntries[0]!.content);
     expect(bootstrap.toolPlan.tools).toEqual([]);
     expect(bootstrap.definition.approval.mode).toBe("always");
     expect((await call("member", "GET", `/agents/${id}`)).statusCode).toBe(200);
+  });
+  it("provides owner-scoped growth and only published organization content", async () => {
+    const growth = await call("member", "GET", "/personal-growth");
+    expect(growth.statusCode).toBe(200);
+    expect(growth.json().summary.activeVersion).toBe(1);
+    expect(growth.json().summary.revisions).toBe(1);
+    const publishedId = randomUUID();
+    await db.query(
+      "INSERT INTO managed_content(id,org_id,title,slug,body,summary,status,version,created_by,published_at) VALUES($1,'a','Portal notice','portal-notice','Body','Summary','published',1,'owner',now()),($2,'a','Draft','portal-draft','Secret','Hidden','draft',1,'owner',NULL),($3,'b','Foreign','foreign','Foreign body','Foreign summary','published',1,'foreign',now())",
+      [publishedId, randomUUID(), randomUUID()],
+    );
+    const content = await call("member", "GET", "/portal-content");
+    expect(content.statusCode).toBe(200);
+    expect(content.json().items.map((item: { id: string }) => item.id)).toContain(publishedId);
+    expect(content.json().items.some((item: { title: string }) => ["Draft", "Foreign"].includes(item.title))).toBe(false);
+    expect((await call("member", "GET", `/portal-content/${publishedId}`)).json().item.body).toBe("Body");
+    expect((await call("member", "GET", `/portal-content/${randomUUID()}`)).statusCode).toBe(404);
+  });
+  it("lists and revokes only the owner's other active sessions", async () => {
+    const otherHash = randomUUID();
+    await db.query(
+      "INSERT INTO session(org_id,user_id,token_hash,expires_at,user_agent,ip_address) VALUES('a','member',$1,now()+interval '1 day','Second browser','127.0.0.8')",
+      [otherHash],
+    );
+    const sessions = await call("member", "GET", "/auth/sessions");
+    expect(sessions.statusCode).toBe(200);
+    const current = sessions.json().items.find((item: { current: boolean; userAgent: string | null }) => item.current);
+    const other = sessions.json().items.find((item: { current: boolean; userAgent: string | null }) => !item.current && item.userAgent === "Second browser");
+    expect(current).toBeTruthy();
+    expect(other).toBeTruthy();
+    expect((await call("member", "DELETE", `/auth/sessions/${other.id}`)).statusCode).toBe(200);
+    expect((await call("member", "DELETE", `/auth/sessions/${current.id}`)).statusCode).toBe(409);
+    expect((await call("foreign", "DELETE", `/auth/sessions/${current.id}`)).statusCode).toBe(409);
   });
   it("serves own actual revisions but keeps enterprise catalog projections separate", async () => {
     const detail = (await call("member", "GET", `/agents/${id}`)).json();

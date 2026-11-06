@@ -127,6 +127,84 @@ export async function channelRoutes(app: FastifyInstance): Promise<void> {
     );
     return { items: rows.map(mapChannel), total: rows.length };
   });
+  app.get("/channels/:id/health", async (request) => {
+    requireManage(request.user);
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const account = await one<{
+      id: string;
+      status: string;
+      type: string;
+      app_id: string | null;
+      app_secret_encrypted: string | null;
+      verification_token: string | null;
+    }>(
+      "SELECT id,status,type,app_id,app_secret_encrypted,verification_token FROM channel_account WHERE id=$1 AND org_id=$2",
+      [id, request.user.orgId],
+    );
+    if (!account) throw notFound("渠道不存在");
+    const stats = await one<{
+      bindings: number;
+      events24h: number;
+      processed24h: number;
+      lastEvent: string | null;
+    }>(
+      'SELECT (SELECT count(*)::int FROM channel_binding WHERE account_id=$1 AND org_id=$2) AS bindings,(SELECT count(*)::int FROM channel_event WHERE account_id=$1 AND org_id=$2 AND created_at>=now()-interval \'24 hours\') AS "events24h",(SELECT count(*)::int FROM channel_event WHERE account_id=$1 AND org_id=$2 AND processed_at>=now()-interval \'24 hours\') AS "processed24h",(SELECT max(created_at) FROM channel_event WHERE account_id=$1 AND org_id=$2) AS "lastEvent"',
+      [id, request.user.orgId],
+    );
+    return {
+      configured: Boolean(account.app_id && account.app_secret_encrypted),
+      enabled: account.status === "active",
+      signatureConfigured:
+        account.type === "feishu"
+          ? Boolean(account.verification_token)
+          : Boolean(account.app_secret_encrypted),
+      ...stats,
+      callbackConfigured:
+        account.type === "feishu" || account.type === "dingtalk",
+      deliveryVerified: false,
+    };
+  });
+  app.get("/channels/:id/bindings", async (request) => {
+    requireManage(request.user);
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    if (
+      !(await one("SELECT id FROM channel_account WHERE id=$1 AND org_id=$2", [
+        id,
+        request.user.orgId,
+      ]))
+    )
+      throw notFound();
+    return {
+      items: await query(
+        'SELECT b.id,b.user_id AS "userId",u.name,u.email,b.external_user_id AS "externalUserId",b.external_conversation_id AS "externalConversationId",b.created_at AS "createdAt" FROM channel_binding b JOIN app_user u ON u.id=b.user_id JOIN membership m ON m.user_id=b.user_id AND m.org_id=b.org_id AND m.status=\'active\' WHERE b.account_id=$1 AND b.org_id=$2 ORDER BY b.created_at DESC',
+        [id, request.user.orgId],
+      ),
+    };
+  });
+  app.delete("/channels/:id/bindings/:bindingId", async (request) => {
+    requireManage(request.user);
+    const { id, bindingId } = z
+      .object({ id: z.string().uuid(), bindingId: z.string().uuid() })
+      .parse(request.params);
+    return sensitiveMutation(request.user, "manage", async (c) => {
+      const r = await c.query(
+        "DELETE FROM channel_binding WHERE id=$1 AND account_id=$2 AND org_id=$3 RETURNING id",
+        [bindingId, id, request.user.orgId],
+      );
+      if (!r.rowCount) throw notFound();
+      await audit(
+        {
+          orgId: request.user.orgId,
+          actorId: request.user.id,
+          action: "channel.unbind",
+          resourceType: "channel_binding",
+          resourceId: bindingId,
+        },
+        c,
+      );
+      return { ok: true };
+    });
+  });
 
   app.post("/channels", async (request) => {
     return sensitiveMutation(request.user, "manage", async (client) => {

@@ -54,6 +54,14 @@ export function PersonalPage({ state }: { state: PersonalState }) {
             </div>
             <div className="grid gap-8 p-6 sm:grid-cols-2 sm:p-10">
               <div>
+                <h3 className="mb-3 font-medium">搭档身份</h3>
+                <dl className="space-y-3 text-sm">
+                  <div><dt className="text-xs text-slate-500">角色定位</dt><dd className="mt-1 text-slate-800">{agent.profile.role || "尚未设置"}</dd></div>
+                  <div><dt className="text-xs text-slate-500">使命</dt><dd className="mt-1 whitespace-pre-wrap text-slate-800">{agent.profile.mission || "尚未设置"}</dd></div>
+                  {agent.profile.styleTags.length ? <div><dt className="text-xs text-slate-500">沟通风格</dt><dd className="mt-1 flex flex-wrap gap-1.5">{agent.profile.styleTags.map((tag) => <span key={tag} className="border border-slate-200 px-2 py-1 text-xs text-slate-700">{tag}</span>)}</dd></div> : null}
+                </dl>
+              </div>
+              <div>
                 <h3 className="mb-3 font-medium">工作职责</h3>
                 <p className="whitespace-pre-wrap break-words text-sm leading-7 text-slate-600">
                   {agent.profile.purpose}
@@ -66,7 +74,18 @@ export function PersonalPage({ state }: { state: PersonalState }) {
                     "清晰、准确地回答；不确定时主动澄清。"}
                 </p>
               </div>
+              <div className="sm:col-span-2">
+                <h3 className="mb-3 font-medium">关于搭档</h3>
+                <p className="whitespace-pre-wrap break-words text-sm leading-7 text-slate-600">{agent.profile.selfIntroduction || "为搭档补充自我介绍，明确它的工作方式。"}</p>
+              </div>
+              <div className="sm:col-span-2">
+                <h3 className="mb-3 font-medium">关于我</h3>
+                <p className="whitespace-pre-wrap break-words text-sm leading-7 text-slate-600">{agent.profile.userContext || "补充你的角色与工作背景，让搭档更好理解任务上下文。"}</p>
+              </div>
             </div>
+          </Card>
+          <Card title="能力范围" description="个人搭档仅处理文本任务，不连接工具、知识库或自动记忆。">
+            <div className="flex flex-wrap gap-x-8 gap-y-3 text-sm"><span><strong className="font-semibold">文本执行</strong><span className="ml-2 text-emerald-700">{state.readiness.canExecute ? "可用" : "等待企业配置模型"}</span></span><span><strong className="font-semibold">工具与外部连接</strong><span className="ml-2 text-slate-500">未启用</span></span><span><strong className="font-semibold">自动记忆</strong><span className="ml-2 text-slate-500">未启用</span></span></div>
           </Card>
           <div className="grid gap-5 sm:grid-cols-2">
             <Card>

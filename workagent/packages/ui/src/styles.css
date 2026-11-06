@@ -56,6 +56,21 @@ select {
 .wa-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
+.wa-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.wa-scrollbar:hover,
+.wa-scrollbar:focus-within {
+  scrollbar-color: #cbd5e1 transparent;
+}
+.wa-scrollbar::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.wa-scrollbar:hover::-webkit-scrollbar-thumb,
+.wa-scrollbar:focus-within::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
 
 .wa-prose {
   white-space: pre-wrap;

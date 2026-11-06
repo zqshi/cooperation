@@ -56,10 +56,10 @@ export async function apiFetch<T = unknown>(
         error.error.details,
       );
     }
-    throw new ApiError(
-      typeof error === "string" ? error : "请求失败",
-      response.status,
-    );
+    const message = response.status >= 500
+      ? "管理服务暂不可用，请确认 API 服务已启动后重试。"
+      : typeof error === "string" ? error : "请求失败";
+    throw new ApiError(message, response.status);
   }
 
   return data as T;

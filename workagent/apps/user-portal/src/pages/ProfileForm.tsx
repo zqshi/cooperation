@@ -19,19 +19,31 @@ export function ProfileForm({
   initial?: PersonalProfile;
   onSaved: () => void;
 }) {
+  const [styleTagsText, setStyleTagsText] = useState(initial?.styleTags?.join("，") ?? "");
   const [draft, setDraft] = useState<PersonalProfile>(
     initial ?? {
       name: "我的搭档",
       avatar: "spark",
+      role: "",
+      mission: "",
+      selfIntroduction: "",
+      userContext: "",
+      styleTags: [],
+      personalSkills: [],
+      knowledgeEntries: [],
+      memoryEntries: [],
       purpose: "",
       preferences: "",
     },
   );
   const save = useMutation({
-    mutationFn: () =>
-      initial
-        ? put("/v1/personal-assistant", draft)
-        : post("/v1/personal-assistant", draft),
+    mutationFn: () => {
+      const styleTags = styleTagsText.split(/[，,]/).map((tag) => tag.trim()).filter(Boolean).slice(0, 8);
+      const profile = { ...draft, styleTags };
+      return initial
+        ? put("/v1/personal-assistant", profile)
+        : post("/v1/personal-assistant", profile);
+    },
     onSuccess: onSaved,
   });
   return (
@@ -68,6 +80,15 @@ export function ProfileForm({
           ))}
         </Select>
       </Field>
+      <Field label="角色定位" hint="用一句话说明搭档擅长扮演什么角色。">
+        <Input maxLength={160} value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value })} placeholder="例如：严谨的产品需求分析伙伴" />
+      </Field>
+      <Field label="使命" hint="搭档在协助你时要优先达成的目标。">
+        <Textarea maxLength={800} rows={3} value={draft.mission} onChange={(e) => setDraft({ ...draft, mission: e.target.value })} placeholder="例如：帮助我把复杂问题拆解成清晰、可执行的步骤。" />
+      </Field>
+      <Field label="关于搭档" hint="可描述搭档的自我介绍和工作方式。">
+        <Textarea maxLength={2000} rows={4} value={draft.selfIntroduction} onChange={(e) => setDraft({ ...draft, selfIntroduction: e.target.value })} placeholder="例如：我会先核实需求，再整理结论和待确认项。" />
+      </Field>
       <Field
         label="工作职责"
         hint="希望搭档帮你做什么？这些内容会进入实际执行指令。"
@@ -80,6 +101,12 @@ export function ProfileForm({
           onChange={(e) => setDraft({ ...draft, purpose: e.target.value })}
           placeholder="例如：帮助整理产品需求、起草周报，并明确标记待确认的信息。"
         />
+      </Field>
+      <Field label="关于我" hint="补充帮助搭档理解你的职责、团队和常见工作背景的信息。">
+        <Textarea maxLength={4000} rows={4} value={draft.userContext} onChange={(e) => setDraft({ ...draft, userContext: e.target.value })} placeholder="例如：我负责企业产品规划，常与研发和运营团队协作。" />
+      </Field>
+      <Field label="沟通风格" hint="最多 8 项，以逗号分隔。">
+        <Input value={styleTagsText} onChange={(e) => setStyleTagsText(e.target.value)} placeholder="先结论、简洁、严谨" />
       </Field>
       <Field label="协作偏好">
         <Textarea

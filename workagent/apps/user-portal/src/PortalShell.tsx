@@ -10,17 +10,6 @@ export function PortalShell({
 }) {
   const { user, logout } = useAuth();
   const { pathname } = useLocation();
-  const groups = [
-    { label: "我的搭档", items: nav.slice(0, 1) },
-    { label: "任务协作", items: nav.slice(1, 3) },
-    { label: "运行管理", items: nav.slice(3) },
-  ];
-  const active =
-    groups.find((g) =>
-      g.items.some((i) =>
-        i.to === "/" ? pathname === "/" : pathname.startsWith(i.to),
-      ),
-    ) ?? groups[0]!;
   return (
     <div className="min-h-screen">
       <a href="#workspace" className="sr-only focus:not-sr-only">
@@ -42,24 +31,10 @@ export function PortalShell({
             </button>
           </div>
         </div>
-        <nav aria-label="Portal 分组" className="!mt-5">
-          {groups.map((group) => (
-            <NavLink
-              key={group.label}
-              to={group.items[0]!.to}
-              className={
-                active.label === group.label ? "!bg-blue-50 !text-blue-700" : ""
-              }
-            >
-              {group.label}
-            </NavLink>
-          ))}
-        </nav>
-        <nav aria-label="员工工作导航" className="!mt-2">
-          {active.items.map((item) => (
+        <nav aria-label="员工工作导航" className="portal-flat-nav">
+          {nav.map((item) => (
             <NavLink key={item.to} to={item.to} end={item.end}>
-              <item.icon className="h-4 w-4 shrink-0" />
-              {item.label}
+              <item.icon className="h-4 w-4 shrink-0" />{item.label}
             </NavLink>
           ))}
         </nav>

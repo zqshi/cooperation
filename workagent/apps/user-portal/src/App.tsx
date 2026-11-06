@@ -15,20 +15,26 @@ import {
   useAuth,
   type NavItem,
 } from "@workagent/ui";
-import { Bot, ListTodo, ShieldCheck } from "lucide-react";
+import { Bot, BookOpen, Brain, ListTodo, MonitorSmartphone, ShieldCheck, Sparkles, TrendingUp } from "lucide-react";
 import { RunDetailPage } from "./pages/RunDetailPage.js";
 import { ConversationsPage } from "./pages/ConversationsPage.js";
 import { ConversationDetailPage } from "./pages/ConversationDetailPage.js";
 
 import { AutomationPage } from "./pages/AutomationPage.js";
 import { ProjectsPage } from "./pages/ProjectsPage.js";
+import { PersonalGrowthPage, PortalCapabilityPage, PortalContentPage, PortalDevicesPage } from "./pages/PortalCapabilityPages.js";
 
 const nav: NavItem[] = [
   { to: "/", label: "搭档档案", icon: Bot, end: true },
+  { to: "/growth", label: "成长", icon: TrendingUp },
+  { to: "/memory", label: "记忆", icon: Brain },
+  { to: "/skills", label: "技能", icon: Sparkles },
+  { to: "/knowledge", label: "知识", icon: BookOpen },
   { to: "/automations", label: "自动化", icon: ListTodo },
   { to: "/projects", label: "项目", icon: ListTodo },
-  { to: "/authorization", label: "授权与渠道", icon: ShieldCheck },
-  { to: "/usage", label: "我的消耗", icon: ListTodo },
+  { to: "/authorization", label: "授权", icon: ShieldCheck },
+  { to: "/devices", label: "设备", icon: MonitorSmartphone },
+  { to: "/usage", label: "消耗", icon: ListTodo },
 ];
 
 export default function App() {
@@ -75,6 +81,13 @@ function PersonalPortal() {
           element={<Navigate to="/projects" replace />}
         />
         <Route path="/authorization" element={<PersonalAuthorizationPage />} />
+        <Route path="/devices" element={<PortalDevicesPage />} />
+        <Route path="/growth" element={<PersonalGrowthPage />} />
+        <Route path="/memory" element={<PortalCapabilityPage section="memoryEntries" />} />
+        <Route path="/skills" element={<PortalCapabilityPage section="personalSkills" />} />
+        <Route path="/knowledge" element={<PortalCapabilityPage section="knowledgeEntries" />} />
+        <Route path="/content" element={<PortalContentPage />} />
+        <Route path="/content/:id" element={<PortalContentPage />} />
         <Route path="/usage" element={<PersonalUsagePage />} />
         <Route path="/automations" element={<AutomationPage />} />
         <Route path="/automations/:id" element={<AutomationPage />} />

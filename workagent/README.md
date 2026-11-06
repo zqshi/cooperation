@@ -29,9 +29,9 @@ flowchart LR
 
 任务协作只有「自动化」与「项目」两个入口。每位用户拥有真实、不可共享的默认项目，展示本人未归属执行；这只是授权展示上下文，不改写执行历史的项目归属。没有独立个人执行历史列表。
 
-个人搭档及其自动化仅处理文本，不接工具、知识库、个人记忆或 IM 投递。企业 Agent 的工具、知识和渠道能力另行配置；保存配置不代表供应商已经连通。项目任务是持久工作记录，Agent 是可选执行者，执行成功不等于任务验收。
+个人 Agent 及其自动化仅处理文本，可使用本人维护的个人技能、知识条目和确认记忆，不连接外部工具、企业知识库或 IM 投递。企业 Agent 的工具、知识和渠道能力另行配置；保存配置不代表供应商已经连通。项目任务是持久工作记录，Agent 是可选执行者，执行成功不等于任务验收。当前没有部门实体或部门 Agent 授权模型。
 
-详见 [产品介绍与洞察](docs/product.md) 和 [交互指南](docs/product-experience.md)。
+详见 [产品边界](docs/product.md)、[Portal 交互入口](docs/product-experience.md) 和 [系统架构](docs/architecture.md)。
 
 ## 本地开发
 
@@ -75,6 +75,6 @@ pnpm build
 pnpm test
 ```
 
-[架构](docs/architecture.md) · [测试](docs/testing.md) · [运维与发布门槛](docs/operations.md) · [设计决策](docs/decisions.md)
+[产品边界](docs/product.md) · [系统架构](docs/architecture.md) · [测试](docs/testing.md) · [运维与发布门槛](docs/operations.md) · [设计决策](docs/decisions.md)
 
 build 检查共享包并构建两个前端；后端通过 tsx 运行 TypeScript 源码。仓库包含 CI 配置，不代表托管 CI 已通过，也不代表已部署。当前未声明开源许可证，公开源码不自动授予使用或分发许可。

@@ -1,0 +1,4 @@
+ALTER TABLE org ADD COLUMN industry text NOT NULL DEFAULT '';
+ALTER TABLE org ADD COLUMN company_size text NOT NULL DEFAULT '';
+ALTER TABLE org ADD COLUMN contact_phone text NOT NULL DEFAULT '';
+ALTER TABLE org ADD COLUMN description text NOT NULL DEFAULT '';

@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { Agent, fetch as request } from "undici";
 import { config } from "@workagent/config";
 import { badRequest } from "./errors.js";
+import { query } from "@workagent/db";
 
 export function publicAddress(address: string): boolean {
   if (isIP(address) === 4) {
@@ -31,12 +32,20 @@ export function publicAddress(address: string): boolean {
 export async function toolFetch(
   raw: string,
   init: Parameters<typeof request>[1] = {},
+  purpose: "tool" | "model" = "tool",
 ) {
   const url = new URL(raw);
-  const allowed = config.toolAllowedHosts
-    .split(",")
-    .map((v) => v.trim())
-    .filter(Boolean);
+  const managed = await query<{ hostname: string }>(
+    "SELECT hostname FROM gateway_upstream WHERE enabled AND purpose IN ($1,'both')",
+    [purpose],
+  );
+  const allowed = [
+    ...config.toolAllowedHosts
+      .split(",")
+      .map((v) => v.trim())
+      .filter(Boolean),
+    ...managed.map((row) => row.hostname),
+  ];
   const testLoopback =
     config.nodeEnv === "test" &&
     process.env.TEST_TOOL_LOOPBACK === "1" &&

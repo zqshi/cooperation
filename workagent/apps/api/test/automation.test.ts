@@ -24,7 +24,7 @@ const who = (id = "alice") =>
   }) as import("@workagent/core").AuthUser;
 const call = (
   id: string,
-  method: "GET" | "POST" | "PUT",
+  method: "GET" | "POST" | "PUT" | "DELETE",
   path: string,
   payload?: unknown,
 ) =>
@@ -52,6 +52,221 @@ const create = async (extra: Partial<AutomationInput> = {}) => {
 const history = async (id: string) =>
   (await call("alice", "GET", `/automations/${id}/history`)).json();
 const nowPlus = (ms: number) => new Date(Date.now() + ms).toISOString();
+describe.sequential("dedicated management domains", () => {
+  it("versions content, rejects stale edits, and isolates other enterprises", async () => {
+    const content = {
+      title: "企业指南",
+      slug: "management-guide",
+      body: "真实正文",
+      summary: "摘要",
+      status: "draft",
+    };
+    expect(
+      (await call("alice", "POST", "/management/content", { content }))
+        .statusCode,
+    ).toBe(403);
+    const created = await call("admin", "POST", "/management/content", {
+      content,
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const id = created.json().item.id;
+    expect(
+      (
+        await call("admin", "PUT", `/management/content/${id}`, {
+          content: { ...content, status: "published" },
+          expectedVersion: 1,
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await call("admin", "PUT", `/management/content/${id}`, {
+          content,
+          expectedVersion: 1,
+        })
+      ).statusCode,
+    ).toBe(409);
+    const item = await call("admin", "GET", `/management/content/${id}`);
+    expect(item.json().revisions).toHaveLength(2);
+    expect(
+      (await call("foreign", "GET", `/management/content/${id}`)).statusCode,
+    ).toBe(403);
+  });
+  it("requires independent platform identity for dictionaries and audits edits", async () => {
+    await db.query(
+      "INSERT INTO platform_admin(user_id) VALUES('admin') ON CONFLICT DO NOTHING",
+    );
+    const token = randomUUID();
+    await db.query(
+      "INSERT INTO platform_session(user_id,token_hash,expires_at) VALUES('admin',$1,now()+interval '1 hour')",
+      [core.sha256(token)],
+    );
+    const request = (
+      method: "GET" | "POST" | "PUT",
+      url: string,
+      payload?: object,
+    ) =>
+      app.inject({
+        method,
+        url: "/v1/platform" + url,
+        headers: { authorization: "Bearer " + token },
+        payload,
+      });
+    expect((await call("admin", "GET", "/platform/dicts")).statusCode).toBe(
+      401,
+    );
+    const body = {
+      category: "industry",
+      code: "software",
+      label: "软件",
+      enabled: true,
+      sortOrder: 1,
+    };
+    const created = await request("POST", "/dicts", body);
+    expect(created.statusCode, created.body).toBe(201);
+    expect(
+      (
+        await request("PUT", "/dicts/" + created.json().item.id, {
+          ...body,
+          label: "软件服务",
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (await request("GET", "/dicts?search=software")).json().items,
+    ).toHaveLength(1);
+    expect(
+      (
+        await db.query(
+          "SELECT id FROM platform_audit WHERE action='dictionary.save'",
+        )
+      ).length,
+    ).toBe(2);
+    const task = await request("POST", "/scheduled-tasks", {
+      name: "审批过期处理",
+      handler: "approval-expiry",
+      intervalMinutes: 60,
+      enabled: false,
+    });
+    expect(task.statusCode, task.body).toBe(201);
+    expect(
+      (await request("POST", `/scheduled-tasks/${task.json().id}/trigger`))
+        .statusCode,
+    ).toBe(200);
+    expect(
+      (await request("POST", `/scheduled-tasks/${task.json().id}/trigger`))
+        .statusCode,
+    ).toBe(409);
+    await core.tickSystemSchedules();
+    const runs = (
+      await request("GET", `/scheduled-tasks/${task.json().id}`)
+    ).json().runs;
+    expect(runs[0].status).toBe("succeeded");
+    const orphan = await db.one<{ id: string }>(
+      "INSERT INTO system_schedule_run(schedule_id,trigger,status,started_at) VALUES($1,'scheduled','running',now()-interval '3 minutes') RETURNING id",
+      [task.json().id],
+    );
+    await core.tickSystemSchedules();
+    expect(
+      (await db.one<{ status: string }>(
+        "SELECT status FROM system_schedule_run WHERE id=$1",
+        [orphan!.id],
+      ))!.status,
+    ).toBe("failed");
+    const profile = {
+      name: "测试规格",
+      kind: "spec",
+      cpuMillis: 1000,
+      memoryMb: 1024,
+      timeoutSeconds: 300,
+      allowedHosts: [],
+      environment: {},
+      enabled: true,
+    };
+    const saved = await request("POST", "/profiles", profile);
+    expect(saved.statusCode, saved.body).toBe(201);
+    expect(
+      (
+        await request("PUT", "/profiles/" + saved.json().id, {
+          ...profile,
+          expectedVersion: 1,
+          cpuMillis: 2000,
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await request("PUT", "/profiles/" + saved.json().id, {
+          ...profile,
+          expectedVersion: 1,
+        })
+      ).statusCode,
+    ).toBe(409);
+    expect(
+      (await request("GET", "/gateway-control/upstreams")).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await request("POST", "/gateway-control/upstreams", {
+          hostname: "127.0.0.1",
+          purpose: "both",
+          reason: "test allowance",
+          enabled: true,
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await request("POST", "/gateway-control/upstreams", {
+          hostname: "*.example.com",
+          purpose: "both",
+          reason: "test allowance",
+          enabled: true,
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect((await db.query("SELECT id FROM gateway_upstream")).length).toBe(0);
+    const channel = await call("admin", "POST", "/channels", {
+      name: "测试接入",
+      type: "feishu",
+      appId: "app-test",
+      appSecret: "test-secret",
+      verificationToken: "verify-token",
+    });
+    expect(channel.statusCode, channel.body).toBe(200);
+    const account = channel.json().channel;
+    expect(
+      (await call("foreign", "GET", `/channels/${account.id}/health`))
+        .statusCode,
+    ).toBe(403);
+    const health = await call("admin", "GET", `/channels/${account.id}/health`);
+    expect(health.json().configured).toBe(true);
+    expect(health.json().deliveryVerified).toBe(false);
+    expect(
+      (
+        await call("admin", "PUT", `/channels/${account.id}/bindings`, {
+          userId: "alice",
+          externalUserId: "external-alice",
+        })
+      ).statusCode,
+    ).toBe(200);
+    const bindings = await call(
+      "admin",
+      "GET",
+      `/channels/${account.id}/bindings`,
+    );
+    expect(bindings.json().items).toHaveLength(1);
+    expect(
+      (
+        await call(
+          "admin",
+          "DELETE",
+          `/channels/${account.id}/bindings/${bindings.json().items[0].id}`,
+        )
+      ).statusCode,
+    ).toBe(200);
+  });
+});
 beforeAll(async () => {
   await admin.query(`CREATE SCHEMA ${schema}`);
   const testUrl = new URL(url!);

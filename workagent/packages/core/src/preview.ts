@@ -71,6 +71,7 @@ export async function previewAgent(input: {
       };
     }
     const result = await chatCompletion({
+      orgId: input.orgId,
       definition: bootstrap.definition,
       messages,
       tools: toolDefs,

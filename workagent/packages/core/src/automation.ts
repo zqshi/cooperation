@@ -96,6 +96,15 @@ async function live(c: PoolClient, org: string, owner: string, agent?: string) {
   if (
     !(
       await c.query(
+        "SELECT id FROM org WHERE id=$1 AND status='active' FOR SHARE",
+        [org],
+      )
+    ).rowCount
+  )
+    throw notFound("企业已停用");
+  if (
+    !(
+      await c.query(
         "SELECT user_id FROM membership WHERE org_id=$1 AND user_id=$2 AND status='active' FOR SHARE",
         [org, owner],
       )

@@ -68,6 +68,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const input = loginSchema.parse(request.body);
       const result = await login(input.email, input.password);
+      await query(
+        "UPDATE session SET user_agent=$2,ip_address=$3 WHERE token_hash=$1",
+        [sha256(result.token), String(request.headers["user-agent"] ?? "").slice(0, 512) || null, request.ip],
+      );
       reply.setCookie(SESSION_COOKIE, result.token, {
         path: "/",
         httpOnly: true,
@@ -96,6 +100,29 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/auth/me", async (request) => ({ user: request.user }));
+
+  app.get("/auth/sessions", async (request) => {
+    const token = request.cookies[SESSION_COOKIE] ?? request.headers.authorization?.replace(/^Bearer /, "");
+    const currentHash = token ? sha256(token) : "";
+    const items = await query(
+      `SELECT id,user_agent AS "userAgent",ip_address AS "ipAddress",created_at AS "createdAt",expires_at AS "expiresAt",token_hash=$3 AS current
+       FROM session WHERE user_id=$1 AND org_id=$2 AND expires_at>now() ORDER BY created_at DESC`,
+      [request.user.id, request.user.orgId, currentHash],
+    );
+    return { items };
+  });
+  app.delete<{ Params: { id: string } }>("/auth/sessions/:id", async (request) => {
+    const token = request.cookies[SESSION_COOKIE] ?? request.headers.authorization?.replace(/^Bearer /, "");
+    const currentHash = token ? sha256(token) : "";
+    await tx(async (client) => {
+      const result = await client.query(
+        "DELETE FROM session WHERE id=$1 AND user_id=$2 AND org_id=$3 AND token_hash<>$4 RETURNING id",
+        [request.params.id, request.user.id, request.user.orgId, currentHash],
+      );
+      if (!result.rowCount) throw conflict("当前会话不能在此处结束，或会话已失效");
+    });
+    return { ok: true };
+  });
 
   app.get("/org", async (request) => {
     const org = await one<{

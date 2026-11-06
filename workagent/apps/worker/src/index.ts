@@ -4,6 +4,7 @@ import type { OutboundChannelMessage } from "@workagent/contracts";
 import {
   cleanupExpired,
   dispatchDueAutomations,
+  tickSystemSchedules,
   createWorker,
   executeEvalRun,
   executeRun,
@@ -76,6 +77,7 @@ async function main(): Promise<void> {
     scheduling = true;
     try {
       await dispatchDueAutomations();
+      await tickSystemSchedules();
     } catch {
       console.error("[worker] automation dispatch failed");
     } finally {
